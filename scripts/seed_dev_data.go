@@ -73,11 +73,11 @@ func main() {
 	var keyID string
 	err = db.NewRaw(`
 		INSERT INTO api_keys (
-			organization_id, key_hash, key_prefix, name, tier, 
+			organization_id, key_hash, key_prefix, name, tier,
 			scopes, rate_limit_rpm
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?::text[], ?)
 		RETURNING id
-	`, orgID, keyHash, keyPrefix, "Dev API Key", "pro", []string{"traces:write", "tests:write", "projects:read"}, 500).Scan(ctx, &keyID)
+	`, orgID, keyHash, keyPrefix, "Dev API Key", "pro", "{traces:write,tests:write,projects:read}", 500).Scan(ctx, &keyID)
 
 	if err != nil {
 		log.Fatalf("Failed to create API key: %v", err)
