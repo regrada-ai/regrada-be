@@ -21,6 +21,19 @@ func NewTestRunHandler(testRunRepo storage.TestRunRepository, projectRepo storag
 }
 
 // UploadTestRun handles test run upload
+// @Summary      Upload a test run
+// @Description  Upload a test run with test results for a project
+// @Tags         test-runs
+// @Accept       json
+// @Produce      json
+// @Param        projectID  path      string           true  "Project ID"
+// @Param        testRun    body      regrada.TestRun  true  "Test run data"
+// @Success      201        {object}  map[string]interface{} "Test run created successfully"
+// @Failure      400        {object}  map[string]interface{} "Invalid request"
+// @Failure      401        {object}  map[string]interface{} "Unauthorized"
+// @Failure      500        {object}  map[string]interface{} "Internal server error"
+// @Security     BearerAuth
+// @Router       /v1/projects/{projectID}/test-runs [post]
 func (h *TestRunHandler) UploadTestRun(c *gin.Context) {
 	projectID := c.Param("projectID")
 
@@ -53,6 +66,17 @@ func (h *TestRunHandler) UploadTestRun(c *gin.Context) {
 }
 
 // ListTestRuns returns paginated list of test runs
+// @Summary      List test runs
+// @Description  Get a paginated list of test runs for a project
+// @Tags         test-runs
+// @Accept       json
+// @Produce      json
+// @Param        projectID  path      string  true  "Project ID"
+// @Success      200        {object}  map[string]interface{} "List of test runs"
+// @Failure      401        {object}  map[string]interface{} "Unauthorized"
+// @Failure      500        {object}  map[string]interface{} "Internal server error"
+// @Security     BearerAuth
+// @Router       /v1/projects/{projectID}/test-runs [get]
 func (h *TestRunHandler) ListTestRuns(c *gin.Context) {
 	projectID := c.Param("projectID")
 
@@ -75,6 +99,19 @@ func (h *TestRunHandler) ListTestRuns(c *gin.Context) {
 }
 
 // GetTestRun returns a single test run
+// @Summary      Get a test run
+// @Description  Get a specific test run by ID
+// @Tags         test-runs
+// @Accept       json
+// @Produce      json
+// @Param        projectID  path      string  true  "Project ID"
+// @Param        runID      path      string  true  "Test Run ID"
+// @Success      200        {object}  regrada.TestRun "Test run details"
+// @Failure      401        {object}  map[string]interface{} "Unauthorized"
+// @Failure      404        {object}  map[string]interface{} "Test run not found"
+// @Failure      500        {object}  map[string]interface{} "Internal server error"
+// @Security     BearerAuth
+// @Router       /v1/projects/{projectID}/test-runs/{runID} [get]
 func (h *TestRunHandler) GetTestRun(c *gin.Context) {
 	projectID := c.Param("projectID")
 	runID := c.Param("runID")

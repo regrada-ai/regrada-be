@@ -1,0 +1,365 @@
+basePath: /
+definitions:
+  regrada.Message:
+    properties:
+      content:
+        type: string
+      role:
+        type: string
+    type: object
+  regrada.SamplingParams:
+    properties:
+      max_output_tokens:
+        type: integer
+      stop:
+        items:
+          type: string
+        type: array
+      temperature:
+        type: number
+      top_p:
+        type: number
+    type: object
+  regrada.TestRun:
+    type: object
+  regrada.Trace:
+    type: object
+  regrada.TraceRequest:
+    properties:
+      messages:
+        items:
+          $ref: "#/definitions/regrada.Message"
+        type: array
+      params:
+        $ref: "#/definitions/regrada.SamplingParams"
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@regrada.com
+    name: API Support
+    url: https://regrada.com/support
+  description: API for tracing and testing LLM applications
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: https://regrada.com/terms
+  title: Regrada API
+  version: "1.0"
+paths:
+  /health:
+    get:
+      consumes:
+        - application/json
+      description: Check the health status of the API, database, and Redis
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: Service is healthy
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service is unhealthy
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Health check
+      tags:
+        - health
+  /v1/projects/{projectID}/test-runs:
+    get:
+      consumes:
+        - application/json
+      description: Get a paginated list of test runs for a project
+      parameters:
+        - description: Project ID
+          in: path
+          name: projectID
+          required: true
+          type: string
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: List of test runs
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+        - BearerAuth: []
+      summary: List test runs
+      tags:
+        - test-runs
+    post:
+      consumes:
+        - application/json
+      description: Upload a test run with test results for a project
+      parameters:
+        - description: Project ID
+          in: path
+          name: projectID
+          required: true
+          type: string
+        - description: Test run data
+          in: body
+          name: testRun
+          required: true
+          schema:
+            $ref: "#/definitions/regrada.TestRun"
+      produces:
+        - application/json
+      responses:
+        "201":
+          description: Test run created successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+        - BearerAuth: []
+      summary: Upload a test run
+      tags:
+        - test-runs
+  /v1/projects/{projectID}/test-runs/{runID}:
+    get:
+      consumes:
+        - application/json
+      description: Get a specific test run by ID
+      parameters:
+        - description: Project ID
+          in: path
+          name: projectID
+          required: true
+          type: string
+        - description: Test Run ID
+          in: path
+          name: runID
+          required: true
+          type: string
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: Test run details
+          schema:
+            $ref: "#/definitions/regrada.TestRun"
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Test run not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+        - BearerAuth: []
+      summary: Get a test run
+      tags:
+        - test-runs
+  /v1/projects/{projectID}/traces:
+    get:
+      consumes:
+        - application/json
+      description: Get a paginated list of traces for a project
+      parameters:
+        - description: Project ID
+          in: path
+          name: projectID
+          required: true
+          type: string
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: List of traces
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+        - BearerAuth: []
+      summary: List traces
+      tags:
+        - traces
+    post:
+      consumes:
+        - application/json
+      description: Upload a single LLM trace for a project
+      parameters:
+        - description: Project ID
+          in: path
+          name: projectID
+          required: true
+          type: string
+        - description: Trace data
+          in: body
+          name: trace
+          required: true
+          schema:
+            $ref: "#/definitions/regrada.Trace"
+      produces:
+        - application/json
+      responses:
+        "201":
+          description: Trace created successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+        - BearerAuth: []
+      summary: Upload a trace
+      tags:
+        - traces
+  /v1/projects/{projectID}/traces/{traceID}:
+    get:
+      consumes:
+        - application/json
+      description: Get a specific trace by ID
+      parameters:
+        - description: Project ID
+          in: path
+          name: projectID
+          required: true
+          type: string
+        - description: Trace ID
+          in: path
+          name: traceID
+          required: true
+          type: string
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: Trace details
+          schema:
+            $ref: "#/definitions/regrada.Trace"
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Trace not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+        - BearerAuth: []
+      summary: Get a trace
+      tags:
+        - traces
+  /v1/projects/{projectID}/traces/batch:
+    post:
+      consumes:
+        - application/json
+      description: Upload multiple LLM traces at once (max 100 per request)
+      parameters:
+        - description: Project ID
+          in: path
+          name: projectID
+          required: true
+          type: string
+        - description: Batch of traces
+          in: body
+          name: traces
+          required: true
+          schema:
+            additionalProperties: true
+            type: object
+      produces:
+        - application/json
+      responses:
+        "201":
+          description: Traces created successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+        - BearerAuth: []
+      summary: Upload traces in batch
+      tags:
+        - traces
+securityDefinitions:
+  BearerAuth:
+    description: Type "Bearer" followed by a space and your API key
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

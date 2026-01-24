@@ -12,15 +12,38 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/extra/bundebug"
-	
+
+	_ "github.com/regrada-ai/regrada-be/docs" // swagger docs
 	"github.com/regrada-ai/regrada-be/internal/api/handlers"
 	apimiddleware "github.com/regrada-ai/regrada-be/internal/api/middleware"
 	"github.com/regrada-ai/regrada-be/internal/storage/postgres"
 )
+
+// @title           Regrada API
+// @version         1.0
+// @description     API for tracing and testing LLM applications
+// @termsOfService  https://regrada.com/terms
+
+// @contact.name   API Support
+// @contact.url    https://regrada.com/support
+// @contact.email  support@regrada.com
+
+// @license.name  Apache 2.0
+// @license.url   http://www.apache.org/licenses/LICENSE-2.0.html
+
+// @host      localhost:8080
+// @BasePath  /
+
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Type "Bearer" followed by a space and your API key
 
 func main() {
 	// Load configuration from environment
@@ -31,7 +54,7 @@ func main() {
 	// Connect to PostgreSQL with Bun
 	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dbURL)))
 	db := bun.NewDB(sqldb, pgdialect.New())
-	
+
 	// Add query hook for debugging (optional, can remove in production)
 	db.AddQueryHook(bundebug.NewQueryHook(bundebug.WithVerbose(true)))
 
@@ -73,6 +96,13 @@ func main() {
 
 	// Health check (no auth required)
 	r.GET("/health", healthHandler.Health)
+
+	// Swagger documentation (no auth required)
+	// Redirect /docs to /docs/index.html for cleaner URL
+	r.GET("/docs", func(c *gin.Context) {
+		c.Redirect(http.StatusMovedPermanently, "/docs/index.html")
+	})
+	r.GET("/docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// API routes (require authentication)
 	v1 := r.Group("/v1")

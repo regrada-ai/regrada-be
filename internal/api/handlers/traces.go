@@ -21,6 +21,19 @@ func NewTraceHandler(traceRepo storage.TraceRepository, projectRepo storage.Proj
 }
 
 // UploadTrace handles single trace upload
+// @Summary      Upload a trace
+// @Description  Upload a single LLM trace for a project
+// @Tags         traces
+// @Accept       json
+// @Produce      json
+// @Param        projectID  path      string         true  "Project ID"
+// @Param        trace      body      regrada.Trace  true  "Trace data"
+// @Success      201        {object}  map[string]interface{} "Trace created successfully"
+// @Failure      400        {object}  map[string]interface{} "Invalid request"
+// @Failure      401        {object}  map[string]interface{} "Unauthorized"
+// @Failure      500        {object}  map[string]interface{} "Internal server error"
+// @Security     BearerAuth
+// @Router       /v1/projects/{projectID}/traces [post]
 func (h *TraceHandler) UploadTrace(c *gin.Context) {
 	projectID := c.Param("projectID")
 
@@ -53,13 +66,26 @@ func (h *TraceHandler) UploadTrace(c *gin.Context) {
 }
 
 // UploadTracesBatch handles batch trace upload
+// @Summary      Upload traces in batch
+// @Description  Upload multiple LLM traces at once (max 100 per request)
+// @Tags         traces
+// @Accept       json
+// @Produce      json
+// @Param        projectID  path      string                  true  "Project ID"
+// @Param        traces     body      map[string]interface{}  true  "Batch of traces"
+// @Success      201        {object}  map[string]interface{}  "Traces created successfully"
+// @Failure      400        {object}  map[string]interface{}  "Invalid request"
+// @Failure      401        {object}  map[string]interface{}  "Unauthorized"
+// @Failure      500        {object}  map[string]interface{}  "Internal server error"
+// @Security     BearerAuth
+// @Router       /v1/projects/{projectID}/traces/batch [post]
 func (h *TraceHandler) UploadTracesBatch(c *gin.Context) {
 	projectID := c.Param("projectID")
 
 	var req struct {
 		Traces []regrada.Trace `json:"traces" binding:"required"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
@@ -108,6 +134,17 @@ func (h *TraceHandler) UploadTracesBatch(c *gin.Context) {
 }
 
 // ListTraces returns paginated list of traces
+// @Summary      List traces
+// @Description  Get a paginated list of traces for a project
+// @Tags         traces
+// @Accept       json
+// @Produce      json
+// @Param        projectID  path      string  true  "Project ID"
+// @Success      200        {object}  map[string]interface{} "List of traces"
+// @Failure      401        {object}  map[string]interface{} "Unauthorized"
+// @Failure      500        {object}  map[string]interface{} "Internal server error"
+// @Security     BearerAuth
+// @Router       /v1/projects/{projectID}/traces [get]
 func (h *TraceHandler) ListTraces(c *gin.Context) {
 	projectID := c.Param("projectID")
 
@@ -130,6 +167,19 @@ func (h *TraceHandler) ListTraces(c *gin.Context) {
 }
 
 // GetTrace returns a single trace
+// @Summary      Get a trace
+// @Description  Get a specific trace by ID
+// @Tags         traces
+// @Accept       json
+// @Produce      json
+// @Param        projectID  path      string  true  "Project ID"
+// @Param        traceID    path      string  true  "Trace ID"
+// @Success      200        {object}  regrada.Trace "Trace details"
+// @Failure      401        {object}  map[string]interface{} "Unauthorized"
+// @Failure      404        {object}  map[string]interface{} "Trace not found"
+// @Failure      500        {object}  map[string]interface{} "Internal server error"
+// @Security     BearerAuth
+// @Router       /v1/projects/{projectID}/traces/{traceID} [get]
 func (h *TraceHandler) GetTrace(c *gin.Context) {
 	projectID := c.Param("projectID")
 	traceID := c.Param("traceID")

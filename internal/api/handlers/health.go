@@ -22,6 +22,15 @@ func NewHealthHandler(db *sql.DB, redisClient *redis.Client) *HealthHandler {
 	}
 }
 
+// Health checks the health of the API and its dependencies
+// @Summary      Health check
+// @Description  Check the health status of the API, database, and Redis
+// @Tags         health
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  map[string]interface{} "Service is healthy"
+// @Failure      503  {object}  map[string]interface{} "Service is unhealthy"
+// @Router       /health [get]
 func (h *HealthHandler) Health(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()

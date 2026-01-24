@@ -64,14 +64,41 @@ docker-compose up -d
 psql postgresql://regrada:regrada_dev@localhost:5432/regrada -f migrations/001_initial_schema.sql
 ```
 
-3. Run the server (coming soon):
+3. Run the server:
 ```bash
 go run cmd/server/main.go
+```
+
+4. Access the API documentation at http://localhost:8080/docs
+
+### Updating API Documentation
+
+When you add or modify API endpoints, regenerate the Swagger documentation:
+
+```bash
+# Install swag tool (one time)
+go install github.com/swaggo/swag/cmd/swag@latest
+
+# Regenerate docs
+swag init -g cmd/server/main.go -o docs
 ```
 
 ## API Documentation
 
 API base URL: `https://api.regrada.com/v1`
+
+### Interactive API Docs
+
+When running locally, access the interactive Swagger UI documentation at:
+```
+http://localhost:8080/docs
+```
+
+The Swagger UI provides:
+- Complete API reference with request/response examples
+- Interactive testing of endpoints
+- Authentication configuration
+- Schema definitions
 
 ### Authentication
 
@@ -82,12 +109,14 @@ Authorization: Bearer rg_live_<key>
 
 ### Key Endpoints
 
-- `POST /v1/projects/:id/traces/batch` - Upload traces
+- `POST /v1/projects/:id/traces` - Upload a single trace
+- `POST /v1/projects/:id/traces/batch` - Upload traces in batch (max 100)
+- `GET /v1/projects/:id/traces` - List traces
+- `GET /v1/projects/:id/traces/:traceID` - Get a specific trace
 - `POST /v1/projects/:id/test-runs` - Upload test results
-- `GET /v1/projects/:id/dashboard/summary` - Dashboard data
-- `POST /v1/github/webhooks` - GitHub webhooks
-
-See full API docs in `docs/api/openapi.yaml`
+- `GET /v1/projects/:id/test-runs` - List test runs
+- `GET /v1/projects/:id/test-runs/:runID` - Get a specific test run
+- `GET /health` - Health check endpoint
 
 ## Shared Types Package
 

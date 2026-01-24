@@ -23,6 +23,9 @@ db-reset: ## Reset database (WARNING: destroys data)
 	sleep 5
 	$(MAKE) db-migrate
 
+docs: ## Update docs
+    swag init -g cmd/server/main.go -o docs
+
 test: ## Run tests
 	go test -v ./...
 
