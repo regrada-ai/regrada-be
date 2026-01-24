@@ -36,8 +36,11 @@ type APIKeyRepository interface {
 }
 
 // ProjectRepository handles project operations
+// ProjectRepository handles project operations
 type ProjectRepository interface {
+	Create(ctx context.Context, project *Project) error
 	Get(ctx context.Context, id string) (*Project, error)
+	ListByOrganization(ctx context.Context, orgID string) ([]*Project, error)
 }
 
 // Project represents a project
@@ -61,4 +64,20 @@ type TestRunRepository interface {
 	Create(ctx context.Context, projectID string, testRun *regrada.TestRun) error
 	Get(ctx context.Context, projectID, runID string) (*regrada.TestRun, error)
 	List(ctx context.Context, projectID string, limit, offset int) ([]*regrada.TestRun, error)
+}
+
+// Organization represents an organization
+type Organization struct {
+	ID             string
+	Name           string
+	Slug           string
+	Tier           string
+	GitHubOrgID    *int64
+	GitHubOrgName  string
+}
+
+// OrganizationRepository handles organization operations
+type OrganizationRepository interface {
+	Create(ctx context.Context, org *Organization) error
+	Get(ctx context.Context, id string) (*Organization, error)
 }

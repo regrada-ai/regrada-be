@@ -12,51 +12,31 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/extra/bundebug"
-
-	_ "github.com/regrada-ai/regrada-be/docs" // swagger docs
+	
 	"github.com/regrada-ai/regrada-be/internal/api/handlers"
 	apimiddleware "github.com/regrada-ai/regrada-be/internal/api/middleware"
 	"github.com/regrada-ai/regrada-be/internal/storage/postgres"
 )
-
-// @title           Regrada API
-// @version         1.0
-// @description     API for tracing and testing LLM applications
-// @termsOfService  https://regrada.com/terms
-
-// @contact.name   API Support
-// @contact.url    https://regrada.com/support
-// @contact.email  support@regrada.com
-
-// @license.name  Apache 2.0
-// @license.url   http://www.apache.org/licenses/LICENSE-2.0.html
-
-// @host      localhost:8080
-// @BasePath  /
-
-// @securityDefinitions.apikey BearerAuth
-// @in header
-// @name Authorization
-// @description Type "Bearer" followed by a space and your API key
 
 func main() {
 	// Load configuration from environment
 	port := getEnv("PORT", "8080")
 	dbURL := getEnv("DATABASE_URL", "postgres://regrada:regrada_dev@localhost:5432/regrada?sslmode=disable")
 	redisURL := getEnv("REDIS_URL", "redis://localhost:6379")
+	ginMode := getEnv("GIN_MODE", "release")
 
 	// Connect to PostgreSQL with Bun
 	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dbURL)))
 	db := bun.NewDB(sqldb, pgdialect.New())
-
+	
 	// Add query hook for debugging (optional, can remove in production)
-	db.AddQueryHook(bundebug.NewQueryHook(bundebug.WithVerbose(true)))
+	if ginMode == "debug" {
+		db.AddQueryHook(bundebug.NewQueryHook(bundebug.WithVerbose(true)))
+	}
 
 	if err := db.Ping(); err != nil {
 		log.Fatalf("Failed to ping database: %v", err)
@@ -76,12 +56,15 @@ func main() {
 	log.Println("✓ Connected to Redis")
 
 	// Initialize storage repositories
+	orgRepo := postgres.NewOrganizationRepository(db)
 	apiKeyRepo := postgres.NewAPIKeyRepository(db)
 	projectRepo := postgres.NewProjectRepository(db)
 	traceRepo := postgres.NewTraceRepository(db)
 	testRunRepo := postgres.NewTestRunRepository(db)
 
 	// Initialize handlers
+	orgHandler := handlers.NewOrganizationHandler(orgRepo)
+	projectHandler := handlers.NewProjectHandler(projectRepo)
 	traceHandler := handlers.NewTraceHandler(traceRepo, projectRepo)
 	testRunHandler := handlers.NewTestRunHandler(testRunRepo, projectRepo)
 	healthHandler := handlers.NewHealthHandler(sqldb, redisClient)
@@ -91,36 +74,42 @@ func main() {
 	rateLimitMiddleware := apimiddleware.NewRateLimitMiddleware(redisClient)
 
 	// Setup Gin router
-	gin.SetMode(gin.ReleaseMode)
+	gin.SetMode(ginMode)
 	r := gin.Default()
 
 	// Health check (no auth required)
 	r.GET("/health", healthHandler.Health)
 
-	// Swagger documentation (no auth required)
-	// Redirect /docs to /docs/index.html for cleaner URL
-	r.GET("/docs", func(c *gin.Context) {
-		c.Redirect(http.StatusMovedPermanently, "/docs/index.html")
-	})
-	r.GET("/docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-
-	// API routes (require authentication)
+	// API routes
 	v1 := r.Group("/v1")
-	v1.Use(authMiddleware.Authenticate())
-	v1.Use(rateLimitMiddleware.Limit())
 	{
-		projects := v1.Group("/projects/:projectID")
-		{
-			// Trace endpoints
-			projects.POST("/traces", traceHandler.UploadTrace)
-			projects.POST("/traces/batch", traceHandler.UploadTracesBatch)
-			projects.GET("/traces", traceHandler.ListTraces)
-			projects.GET("/traces/:traceID", traceHandler.GetTrace)
+		// Public routes (no auth required for testing - in production, add auth)
+		v1.POST("/organizations", orgHandler.CreateOrganization)
+		v1.GET("/organizations/:orgID", orgHandler.GetOrganization)
+		v1.POST("/projects", projectHandler.CreateProject)
+		v1.GET("/projects", projectHandler.ListProjects)
 
-			// Test run endpoints
-			projects.POST("/test-runs", testRunHandler.UploadTestRun)
-			projects.GET("/test-runs", testRunHandler.ListTestRuns)
-			projects.GET("/test-runs/:runID", testRunHandler.GetTestRun)
+		// Protected routes (require authentication)
+		authenticated := v1.Group("")
+		authenticated.Use(authMiddleware.Authenticate())
+		authenticated.Use(rateLimitMiddleware.Limit())
+		{
+			// Project-specific routes
+			projects := authenticated.Group("/projects/:projectID")
+			{
+				projects.GET("", projectHandler.GetProject)
+				
+				// Trace endpoints
+				projects.POST("/traces", traceHandler.UploadTrace)
+				projects.POST("/traces/batch", traceHandler.UploadTracesBatch)
+				projects.GET("/traces", traceHandler.ListTraces)
+				projects.GET("/traces/:traceID", traceHandler.GetTrace)
+
+				// Test run endpoints
+				projects.POST("/test-runs", testRunHandler.UploadTestRun)
+				projects.GET("/test-runs", testRunHandler.ListTestRuns)
+				projects.GET("/test-runs/:runID", testRunHandler.GetTestRun)
+			}
 		}
 	}
 
@@ -132,7 +121,7 @@ func main() {
 
 	// Graceful shutdown
 	go func() {
-		log.Printf("🚀 Server starting on port %s", port)
+		log.Printf("🚀 Server starting on port %s (mode: %s)", port, ginMode)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed: %v", err)
 		}

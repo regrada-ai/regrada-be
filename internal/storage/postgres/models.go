@@ -88,3 +88,18 @@ type DBTestRun struct {
 	CreatedAt        time.Time  `bun:"created_at,notnull,default:now()"`
 	CompletedAt      *time.Time `bun:"completed_at"`
 }
+
+// DBOrganization represents an organization in the database
+type DBOrganization struct {
+	bun.BaseModel `bun:"table:organizations,alias:o"`
+
+	ID            string     `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
+	Name          string     `bun:"name,notnull"`
+	Slug          string     `bun:"slug,notnull,unique"`
+	Tier          string     `bun:"tier,notnull"`
+	GitHubOrgID   *int64     `bun:"github_org_id"`
+	GitHubOrgName string     `bun:"github_org_name"`
+	CreatedAt     time.Time  `bun:"created_at,notnull,default:now()"`
+	UpdatedAt     time.Time  `bun:"updated_at,notnull,default:now()"`
+	DeletedAt     *time.Time `bun:"deleted_at,soft_delete"`
+}
