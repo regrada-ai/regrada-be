@@ -1,0 +1,42 @@
+# VCS
+.git
+.gitignore
+.gitattributes
+.github
+
+# Editor/OS
+.DS_Store
+*.swp
+*.tmp
+
+# Env/config
+.env
+.env.*
+
+# Build/output
+bin/
+dist/
+build/
+coverage/
+tmp/
+*.log
+
+# Dependencies
+node_modules/
+vendor/
+
+# Tests
+**/*_test.go
+
+# Docs
+docs/
+README.md
+QUICKSTART.md
+PHASE_1_SUMMARY.md
+*.md
+
+# Local tooling
+scripts/
+migrations/
+docker-compose.yml
+docker-compose.*.yml

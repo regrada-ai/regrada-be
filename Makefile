@@ -26,13 +26,13 @@ db-reset: ## Reset database (WARNING: destroys data)
 
 db-seed: ## Seed development data
 	@echo "Seeding development data..."
-	go run scripts/seed_dev_data.go
+	go run ./scripts/seed_dev_data
 
 generate-key: ## Generate a new API key (usage: make generate-key ORG_ID=xxx NAME="key name" TIER=standard)
 	@if [ -z "$(ORG_ID)" ]; then echo "Error: ORG_ID required. Usage: make generate-key ORG_ID=xxx NAME=\"key name\" TIER=standard"; exit 1; fi
 	@if [ -z "$(NAME)" ]; then echo "Error: NAME required"; exit 1; fi
 	@if [ -z "$(TIER)" ]; then echo "Error: TIER required (standard/pro/enterprise)"; exit 1; fi
-	go run scripts/generate_api_key.go $(ORG_ID) "$(NAME)" $(TIER)
+	go run ./scripts/generate_api_key $(ORG_ID) "$(NAME)" $(TIER)
 
 test: ## Run tests
 	go test -v ./...

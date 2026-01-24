@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   postgres:
@@ -17,7 +17,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-  
+
   redis:
     image: redis:7-alpine
     ports:
@@ -47,6 +47,15 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'wget -qO- http://localhost:8080/health | grep -q ''"status":"ok"''',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:

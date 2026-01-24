@@ -18,8 +18,8 @@ import (
 
 func main() {
 	if len(os.Args) < 4 {
-		fmt.Println("Usage: go run scripts/generate_api_key.go <org_id> <name> <tier>")
-		fmt.Println("Example: go run scripts/generate_api_key.go 123e4567-e89b-12d3-a456-426614174000 \"Dev API Key\" standard")
+		fmt.Println("Usage: go run ./scripts/generate_api_key <org_id> <name> <tier>")
+		fmt.Println("Example: go run ./scripts/generate_api_key 123e4567-e89b-12d3-a456-426614174000 \"Dev API Key\" standard")
 		os.Exit(1)
 	}
 
@@ -46,7 +46,7 @@ func main() {
 	}
 
 	apiKey := fmt.Sprintf("rg_live_%s", base64.RawURLEncoding.EncodeToString(randomBytes))
-	
+
 	// Hash the API key
 	hash := sha256.Sum256([]byte(apiKey))
 	keyHash := hex.EncodeToString(hash[:])
@@ -64,10 +64,10 @@ func main() {
 	// Insert into database
 	query := `
 		INSERT INTO api_keys (
-			organization_id, key_hash, key_prefix, name, tier, 
+			organization_id, key_hash, key_prefix, name, tier,
 			scopes, rate_limit_rpm
 		) VALUES (
-			?, ?, ?, ?, ?, 
+			?, ?, ?, ?, ?,
 			?, ?
 		) RETURNING id
 	`
