@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/uptrace/bun"
 	"github.com/regrada-ai/regrada-be/internal/storage"
 	"github.com/regrada-ai/regrada-be/pkg/regrada"
+	"github.com/uptrace/bun"
 )
 
 type TestRunRepository struct {
@@ -84,11 +84,15 @@ func (r *TestRunRepository) Get(ctx context.Context, projectID, runID string) (*
 		Status:           dbTestRun.Status,
 	}
 
-	if err := json.Unmarshal(dbTestRun.Results, &testRun.Results); err != nil {
+	if len(dbTestRun.Results) == 0 {
+		testRun.Results = []regrada.CaseResult{}
+	} else if err := json.Unmarshal(dbTestRun.Results, &testRun.Results); err != nil {
 		return nil, err
 	}
 
-	if err := json.Unmarshal(dbTestRun.Violations, &testRun.Violations); err != nil {
+	if len(dbTestRun.Violations) == 0 {
+		testRun.Violations = []regrada.Violation{}
+	} else if err := json.Unmarshal(dbTestRun.Violations, &testRun.Violations); err != nil {
 		return nil, err
 	}
 
@@ -126,11 +130,15 @@ func (r *TestRunRepository) List(ctx context.Context, projectID string, limit, o
 			Status:           dbTestRun.Status,
 		}
 
-		if err := json.Unmarshal(dbTestRun.Results, &testRun.Results); err != nil {
+		if len(dbTestRun.Results) == 0 {
+			testRun.Results = []regrada.CaseResult{}
+		} else if err := json.Unmarshal(dbTestRun.Results, &testRun.Results); err != nil {
 			return nil, err
 		}
 
-		if err := json.Unmarshal(dbTestRun.Violations, &testRun.Violations); err != nil {
+		if len(dbTestRun.Violations) == 0 {
+			testRun.Violations = []regrada.Violation{}
+		} else if err := json.Unmarshal(dbTestRun.Violations, &testRun.Violations); err != nil {
 			return nil, err
 		}
 

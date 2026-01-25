@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -64,6 +65,7 @@ func main() {
 
 	// Initialize handlers
 	orgHandler := handlers.NewOrganizationHandler(orgRepo)
+	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo)
 	projectHandler := handlers.NewProjectHandler(projectRepo)
 	traceHandler := handlers.NewTraceHandler(traceRepo, projectRepo)
 	testRunHandler := handlers.NewTestRunHandler(testRunRepo, projectRepo)
@@ -76,6 +78,8 @@ func main() {
 	// Setup Gin router
 	gin.SetMode(ginMode)
 	r := gin.Default()
+	allowedOrigins := strings.Split(getEnv("CORS_ALLOW_ORIGINS", "http://localhost:3000"), ",")
+	r.Use(apimiddleware.NewCORSMiddleware(allowedOrigins))
 
 	// Health check (no auth required)
 	r.GET("/health", healthHandler.Health)
@@ -94,6 +98,9 @@ func main() {
 		authenticated.Use(authMiddleware.Authenticate())
 		authenticated.Use(rateLimitMiddleware.Limit())
 		{
+			authenticated.GET("/api-keys", apiKeyHandler.ListAPIKeys)
+			authenticated.POST("/api-keys", apiKeyHandler.CreateAPIKey)
+
 			// Project-specific routes
 			projects := authenticated.Group("/projects/:projectID")
 			{

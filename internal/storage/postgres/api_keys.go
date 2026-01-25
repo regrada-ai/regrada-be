@@ -47,6 +47,65 @@ func (r *APIKeyRepository) GetByHash(ctx context.Context, keyHash string) (*stor
 	}, nil
 }
 
+func (r *APIKeyRepository) Create(ctx context.Context, apiKey *storage.APIKey) error {
+	dbKey := &DBAPIKey{
+		OrganizationID: apiKey.OrganizationID,
+		KeyHash:        apiKey.KeyHash,
+		KeyPrefix:      apiKey.KeyPrefix,
+		Name:           apiKey.Name,
+		Tier:           apiKey.Tier,
+		Scopes:         apiKey.Scopes,
+		RateLimitRPM:   apiKey.RateLimitRPM,
+		ExpiresAt:      apiKey.ExpiresAt,
+	}
+
+	_, err := r.db.NewInsert().
+		Model(dbKey).
+		Returning("id, created_at").
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+
+	apiKey.ID = dbKey.ID
+	apiKey.CreatedAt = dbKey.CreatedAt
+	return nil
+}
+
+func (r *APIKeyRepository) ListByOrganization(ctx context.Context, orgID string) ([]*storage.APIKey, error) {
+	var dbKeys []DBAPIKey
+	err := r.db.NewSelect().
+		Model(&dbKeys).
+		Where("organization_id = ?", orgID).
+		Where("revoked_at IS NULL").
+		Order("created_at DESC").
+		Scan(ctx)
+
+	if err != nil {
+		return nil, err
+	}
+
+	apiKeys := make([]*storage.APIKey, len(dbKeys))
+	for i, dbKey := range dbKeys {
+		apiKeys[i] = &storage.APIKey{
+			ID:             dbKey.ID,
+			OrganizationID: dbKey.OrganizationID,
+			KeyHash:        dbKey.KeyHash,
+			KeyPrefix:      dbKey.KeyPrefix,
+			Name:           dbKey.Name,
+			Tier:           dbKey.Tier,
+			Scopes:         dbKey.Scopes,
+			RateLimitRPM:   dbKey.RateLimitRPM,
+			LastUsedAt:     dbKey.LastUsedAt,
+			ExpiresAt:      dbKey.ExpiresAt,
+			CreatedAt:      dbKey.CreatedAt,
+			RevokedAt:      dbKey.RevokedAt,
+		}
+	}
+
+	return apiKeys, nil
+}
+
 func (r *APIKeyRepository) UpdateLastUsed(ctx context.Context, id string) error {
 	_, err := r.db.NewUpdate().
 		Model((*DBAPIKey)(nil)).

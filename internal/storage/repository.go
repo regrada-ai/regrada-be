@@ -32,6 +32,8 @@ type APIKey struct {
 // APIKeyRepository handles API key operations
 type APIKeyRepository interface {
 	GetByHash(ctx context.Context, keyHash string) (*APIKey, error)
+	Create(ctx context.Context, apiKey *APIKey) error
+	ListByOrganization(ctx context.Context, orgID string) ([]*APIKey, error)
 	UpdateLastUsed(ctx context.Context, id string) error
 }
 
