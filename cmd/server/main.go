@@ -17,9 +17,10 @@ import (
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/extra/bundebug"
-	
+
 	"github.com/regrada-ai/regrada-be/internal/api/handlers"
 	apimiddleware "github.com/regrada-ai/regrada-be/internal/api/middleware"
+	"github.com/regrada-ai/regrada-be/internal/auth"
 	"github.com/regrada-ai/regrada-be/internal/storage/postgres"
 )
 
@@ -29,11 +30,16 @@ func main() {
 	dbURL := getEnv("DATABASE_URL", "postgres://regrada:regrada_dev@localhost:5432/regrada?sslmode=disable")
 	redisURL := getEnv("REDIS_URL", "redis://localhost:6379")
 	ginMode := getEnv("GIN_MODE", "release")
+	awsRegion := getEnv("AWS_REGION", "us-east-1")
+	cognitoUserPoolID := getEnv("COGNITO_USER_POOL_ID", "")
+	cognitoClientID := getEnv("COGNITO_CLIENT_ID", "")
+	cognitoClientSecret := getEnv("COGNITO_CLIENT_SECRET", "")
+	secureCookies := getEnv("SECURE_COOKIES", "false") == "true"
 
 	// Connect to PostgreSQL with Bun
 	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dbURL)))
 	db := bun.NewDB(sqldb, pgdialect.New())
-	
+
 	// Add query hook for debugging (optional, can remove in production)
 	if ginMode == "debug" {
 		db.AddQueryHook(bundebug.NewQueryHook(bundebug.WithVerbose(true)))
@@ -63,17 +69,42 @@ func main() {
 	traceRepo := postgres.NewTraceRepository(db)
 	testRunRepo := postgres.NewTestRunRepository(db)
 
+	// Initialize Cognito service
+	var cognitoService *auth.CognitoService
+	if cognitoUserPoolID != "" && cognitoClientID != "" {
+		var err error
+		cognitoService, err = auth.NewCognitoService(awsRegion, cognitoUserPoolID, cognitoClientID, cognitoClientSecret)
+		if err != nil {
+			log.Fatalf("Failed to initialize Cognito service: %v", err)
+		}
+		log.Println("✓ Cognito service initialized")
+	} else {
+		log.Println("⚠ Cognito service disabled (missing COGNITO_USER_POOL_ID or COGNITO_CLIENT_ID)")
+	}
+
 	// Initialize handlers
-	orgHandler := handlers.NewOrganizationHandler(orgRepo)
+	orgHandler := handlers.NewOrganizationHandler(orgRepo, cognitoService)
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo)
 	projectHandler := handlers.NewProjectHandler(projectRepo)
 	traceHandler := handlers.NewTraceHandler(traceRepo, projectRepo)
 	testRunHandler := handlers.NewTestRunHandler(testRunRepo, projectRepo)
 	healthHandler := handlers.NewHealthHandler(sqldb, redisClient)
 
+	var authHandler *handlers.AuthHandler
+	if cognitoService != nil {
+		authHandler = handlers.NewAuthHandler(cognitoService, secureCookies)
+	}
+
 	// Initialize middleware
-	authMiddleware := apimiddleware.NewAuthMiddleware(apiKeyRepo, redisClient)
+	apiKeyAuthMiddleware := apimiddleware.NewAuthMiddleware(apiKeyRepo, redisClient)
 	rateLimitMiddleware := apimiddleware.NewRateLimitMiddleware(redisClient)
+
+	// Initialize cookie-based auth middleware if Cognito is configured
+	var cookieAuthMiddleware *apimiddleware.CookieAuthMiddleware
+	if cognitoService != nil {
+		cookieAuthMiddleware = apimiddleware.NewCookieAuthMiddleware(cognitoService)
+		log.Println("✓ Cookie-based authentication enabled")
+	}
 
 	// Setup Gin router
 	gin.SetMode(ginMode)
@@ -87,32 +118,42 @@ func main() {
 	// API routes
 	v1 := r.Group("/v1")
 	{
-		// Public routes (no auth required for testing - in production, add auth)
+		// Authentication routes (no auth required)
+		if authHandler != nil {
+			auth := v1.Group("/auth")
+			{
+				auth.POST("/signup", authHandler.SignUp)
+				auth.POST("/confirm", authHandler.ConfirmSignUp)
+				auth.POST("/signin", authHandler.SignIn)
+				auth.POST("/signout", authHandler.SignOut)
+				auth.POST("/refresh", authHandler.RefreshToken)
+				auth.GET("/me", authHandler.Me)
+			}
+		}
+
+		// Public routes (no auth required)
 		v1.POST("/organizations", orgHandler.CreateOrganization)
 		v1.GET("/organizations/:orgID", orgHandler.GetOrganization)
-		v1.POST("/projects", projectHandler.CreateProject)
-		v1.GET("/projects", projectHandler.ListProjects)
 
-		// Protected routes (require authentication)
-		authenticated := v1.Group("")
-		authenticated.Use(authMiddleware.Authenticate())
-		authenticated.Use(rateLimitMiddleware.Limit())
+		// Protected routes with cookie or API key auth
+		eitherAuth := apimiddleware.NewEitherAuthMiddleware(cookieAuthMiddleware, apiKeyAuthMiddleware)
+		protected := v1.Group("")
+		protected.Use(eitherAuth.Authenticate())
+		protected.Use(rateLimitMiddleware.Limit())
 		{
-			authenticated.GET("/api-keys", apiKeyHandler.ListAPIKeys)
-			authenticated.POST("/api-keys", apiKeyHandler.CreateAPIKey)
+			protected.POST("/organizations/:orgID/invite", orgHandler.InviteUser)
+			protected.POST("/projects", projectHandler.CreateProject)
+			protected.GET("/projects", projectHandler.ListProjects)
+			protected.GET("/api-keys", apiKeyHandler.ListAPIKeys)
+			protected.POST("/api-keys", apiKeyHandler.CreateAPIKey)
 
-			// Project-specific routes
-			projects := authenticated.Group("/projects/:projectID")
+			projects := protected.Group("/projects/:projectID")
 			{
 				projects.GET("", projectHandler.GetProject)
-				
-				// Trace endpoints
 				projects.POST("/traces", traceHandler.UploadTrace)
 				projects.POST("/traces/batch", traceHandler.UploadTracesBatch)
 				projects.GET("/traces", traceHandler.ListTraces)
 				projects.GET("/traces/:traceID", traceHandler.GetTrace)
-
-				// Test run endpoints
 				projects.POST("/test-runs", testRunHandler.UploadTestRun)
 				projects.GET("/test-runs", testRunHandler.ListTestRuns)
 				projects.GET("/test-runs/:runID", testRunHandler.GetTestRun)

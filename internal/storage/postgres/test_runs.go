@@ -86,13 +86,13 @@ func (r *TestRunRepository) Get(ctx context.Context, projectID, runID string) (*
 
 	if len(dbTestRun.Results) == 0 {
 		testRun.Results = []regrada.CaseResult{}
-	} else if err := json.Unmarshal(dbTestRun.Results, &testRun.Results); err != nil {
+	} else if err := decodeJSONField(dbTestRun.Results, &testRun.Results); err != nil {
 		return nil, err
 	}
 
 	if len(dbTestRun.Violations) == 0 {
 		testRun.Violations = []regrada.Violation{}
-	} else if err := json.Unmarshal(dbTestRun.Violations, &testRun.Violations); err != nil {
+	} else if err := decodeJSONField(dbTestRun.Violations, &testRun.Violations); err != nil {
 		return nil, err
 	}
 
@@ -132,13 +132,13 @@ func (r *TestRunRepository) List(ctx context.Context, projectID string, limit, o
 
 		if len(dbTestRun.Results) == 0 {
 			testRun.Results = []regrada.CaseResult{}
-		} else if err := json.Unmarshal(dbTestRun.Results, &testRun.Results); err != nil {
+		} else if err := decodeJSONField(dbTestRun.Results, &testRun.Results); err != nil {
 			return nil, err
 		}
 
 		if len(dbTestRun.Violations) == 0 {
 			testRun.Violations = []regrada.Violation{}
-		} else if err := json.Unmarshal(dbTestRun.Violations, &testRun.Violations); err != nil {
+		} else if err := decodeJSONField(dbTestRun.Violations, &testRun.Violations); err != nil {
 			return nil, err
 		}
 

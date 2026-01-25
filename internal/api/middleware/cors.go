@@ -30,6 +30,8 @@ func NewCORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
 			} else if _, ok := allowed[origin]; ok {
 				c.Header("Access-Control-Allow-Origin", origin)
 				c.Header("Vary", "Origin")
+				// Allow credentials (cookies) only for specific origins, not wildcard
+				c.Header("Access-Control-Allow-Credentials", "true")
 			}
 
 			c.Header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")

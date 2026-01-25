@@ -34,11 +34,11 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.server
-    environment:
-      DATABASE_URL: postgres://regrada:regrada_dev@postgres:5432/regrada?sslmode=disable
-      REDIS_URL: redis://redis:6379
-      PORT: 8080
-      GIN_MODE: release
+    develop:
+      watch:
+        - action: rebuild
+          path: .
+    env_file: .env
     ports:
       - "8080:8080"
     depends_on:

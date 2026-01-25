@@ -1,19 +1,24 @@
 package handlers
 
 import (
+	"errors"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/regrada-ai/regrada-be/internal/auth"
 	"github.com/regrada-ai/regrada-be/internal/storage"
 )
 
 type OrganizationHandler struct {
-	orgRepo storage.OrganizationRepository
+	orgRepo        storage.OrganizationRepository
+	cognitoService *auth.CognitoService
 }
 
-func NewOrganizationHandler(orgRepo storage.OrganizationRepository) *OrganizationHandler {
+func NewOrganizationHandler(orgRepo storage.OrganizationRepository, cognitoService *auth.CognitoService) *OrganizationHandler {
 	return &OrganizationHandler{
-		orgRepo: orgRepo,
+		orgRepo:        orgRepo,
+		cognitoService: cognitoService,
 	}
 }
 
@@ -60,7 +65,111 @@ func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 		return
 	}
 
+	if h.cognitoService != nil {
+		accessToken, err := c.Cookie(accessTokenCookie)
+		if err == nil && accessToken != "" {
+			if err := h.cognitoService.UpdateUserOrganization(c.Request.Context(), accessToken, org.ID); err != nil {
+				log.Printf("Failed to link organization to Cognito user: %v", err)
+			}
+		}
+	}
+
 	c.JSON(http.StatusCreated, org)
+}
+
+// InviteUser assigns a user to an organization via Cognito.
+func (h *OrganizationHandler) InviteUser(c *gin.Context) {
+	if h.cognitoService == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Cognito is not configured",
+			},
+		})
+		return
+	}
+
+	orgID := c.Param("orgID")
+	if orgID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"code":    "INVALID_REQUEST",
+				"message": "organization ID is required",
+			},
+		})
+		return
+	}
+
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": gin.H{
+				"code":    "UNAUTHORIZED",
+				"message": "User authentication required",
+			},
+		})
+		return
+	}
+
+	userOrgID := c.GetString("organization_id")
+	if userOrgID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": gin.H{
+				"code":    "UNAUTHORIZED",
+				"message": "Organization not found in token",
+			},
+		})
+		return
+	}
+
+	if userOrgID != orgID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    "FORBIDDEN",
+				"message": "Cannot invite users to a different organization",
+			},
+		})
+		return
+	}
+
+	var req struct {
+		Email string `json:"email" binding:"required,email"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"code":    "INVALID_REQUEST",
+				"message": err.Error(),
+			},
+		})
+		return
+	}
+
+	if err := h.cognitoService.AdminUpdateUserOrganization(c.Request.Context(), req.Email, orgID); err != nil {
+		if errors.Is(err, auth.ErrUserNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{
+					"code":    "NOT_FOUND",
+					"message": "User not found",
+				},
+			})
+			return
+		}
+
+		log.Printf("Failed to invite user to organization: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to invite user",
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+	})
 }
 
 // GetOrganization retrieves an organization by ID
