@@ -3,6 +3,7 @@ package handlers
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"log"
 	"net/http"
 	"time"
 
@@ -82,7 +83,9 @@ func (h *InviteHandler) CreateInvite(c *gin.Context) {
 	}
 
 	// Get inviting user
-	idpSub := c.GetString("sub")
+	idpSub := c.GetString("user_id")
+	log.Printf("DEBUG CreateInvite: user_id=\x27%s\x27", idpSub)
+
 	invitingUser, err := h.userRepo.GetByIDPSub(c.Request.Context(), idpSub)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -212,7 +215,7 @@ func (h *InviteHandler) GetInvite(c *gin.Context) {
 func (h *InviteHandler) AcceptInvite(c *gin.Context) {
 	token := c.Param("token")
 
-	idpSub := c.GetString("sub")
+	idpSub := c.GetString("user_id")
 	if idpSub == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": gin.H{

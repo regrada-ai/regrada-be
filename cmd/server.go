@@ -26,7 +26,9 @@ import (
 	"github.com/regrada-ai/regrada-be/internal/auth"
 	"github.com/regrada-ai/regrada-be/internal/email"
 	"github.com/regrada-ai/regrada-be/internal/migrations"
+	"github.com/regrada-ai/regrada-be/internal/storage"
 	"github.com/regrada-ai/regrada-be/internal/storage/postgres"
+	"github.com/regrada-ai/regrada-be/internal/storage/s3"
 
 	_ "github.com/regrada-ai/regrada-be/docs" // Swagger docs
 )
@@ -62,6 +64,8 @@ func main() {
 	cognitoClientID := getEnv("COGNITO_CLIENT_ID", "")
 	cognitoClientSecret := getEnv("COGNITO_CLIENT_SECRET", "")
 	secureCookies := getEnv("SECURE_COOKIES", "false") == "true"
+	s3Bucket := getEnv("S3_BUCKET", "")
+	cloudFrontDomain := getEnv("CLOUDFRONT_DOMAIN", "")
 
 	// Connect to PostgreSQL with Bun
 	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dbURL)))
@@ -116,17 +120,17 @@ func main() {
 	memberRepo := postgres.NewOrganizationMemberRepository(db)
 	inviteRepo := postgres.NewInviteRepository(db)
 
-	// Initialize Cognito service
-	var cognitoService *auth.CognitoService
+	// Initialize authentication service (Cognito)
+	var authService auth.Service
 	if cognitoUserPoolID != "" && cognitoClientID != "" {
 		var err error
-		cognitoService, err = auth.NewCognitoService(awsRegion, cognitoUserPoolID, cognitoClientID, cognitoClientSecret)
+		authService, err = auth.NewCognitoService(awsRegion, cognitoUserPoolID, cognitoClientID, cognitoClientSecret)
 		if err != nil {
-			log.Fatalf("Failed to initialize Cognito service: %v", err)
+			log.Fatalf("Failed to initialize authentication service: %v", err)
 		}
-		log.Println("✓ Cognito service initialized")
+		log.Println("✓ Authentication service initialized")
 	} else {
-		log.Println("⚠ Cognito service disabled (missing COGNITO_USER_POOL_ID or COGNITO_CLIENT_ID)")
+		log.Println("⚠ Authentication service disabled (missing COGNITO_USER_POOL_ID or COGNITO_CLIENT_ID)")
 	}
 
 	// Initialize email service (optional)
@@ -144,20 +148,33 @@ func main() {
 		log.Println("⚠ Email service disabled (missing EMAIL_FROM_ADDRESS)")
 	}
 
+	// Initialize file storage service (S3) (optional)
+	var storageService storage.FileStorageService
+	if s3Bucket != "" && cloudFrontDomain != "" {
+		var err error
+		storageService, err = s3.NewService(awsRegion, s3Bucket, cloudFrontDomain)
+		if err != nil {
+			log.Fatalf("Failed to initialize file storage service: %v", err)
+		}
+		log.Println("✓ File storage service initialized")
+	} else {
+		log.Println("⚠ File storage service disabled (missing S3_BUCKET or CLOUDFRONT_DOMAIN)")
+	}
+
 	// Initialize handlers
-	orgHandler := handlers.NewOrganizationHandler(orgRepo, cognitoService)
+	orgHandler := handlers.NewOrganizationHandler(orgRepo, authService)
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo)
 	projectHandler := handlers.NewProjectHandler(projectRepo)
 	traceHandler := handlers.NewTraceHandler(traceRepo, projectRepo)
 	testRunHandler := handlers.NewTestRunHandler(testRunRepo, projectRepo)
 	healthHandler := handlers.NewHealthHandler(sqldb, redisClient)
-	userHandler := handlers.NewUserHandler(userRepo, memberRepo)
+	userHandler := handlers.NewUserHandler(userRepo, memberRepo, storageService)
 	inviteHandler := handlers.NewInviteHandler(inviteRepo, userRepo, memberRepo)
 
 	var authHandler *handlers.AuthHandler
 	var emailHandler *handlers.EmailHandler
-	if cognitoService != nil {
-		authHandler = handlers.NewAuthHandler(cognitoService, secureCookies, userRepo, memberRepo, orgRepo, inviteRepo)
+	if authService != nil {
+		authHandler = handlers.NewAuthHandler(authService, secureCookies, userRepo, memberRepo, orgRepo, inviteRepo, storageService)
 	}
 	if emailService != nil {
 		emailHandler = handlers.NewEmailHandler(emailService)
@@ -167,10 +184,10 @@ func main() {
 	apiKeyAuthMiddleware := apimiddleware.NewAuthMiddleware(apiKeyRepo, redisClient)
 	rateLimitMiddleware := apimiddleware.NewRateLimitMiddleware(redisClient)
 
-	// Initialize cookie-based auth middleware if Cognito is configured
+	// Initialize cookie-based auth middleware if auth service is configured
 	var cookieAuthMiddleware *apimiddleware.CookieAuthMiddleware
-	if cognitoService != nil {
-		cookieAuthMiddleware = apimiddleware.NewCookieAuthMiddleware(cognitoService)
+	if authService != nil {
+		cookieAuthMiddleware = apimiddleware.NewCookieAuthMiddleware(authService)
 		log.Println("✓ Cookie-based authentication enabled")
 	}
 
@@ -214,6 +231,7 @@ func main() {
 		protected.Use(rateLimitMiddleware.Limit())
 		{
 			// Organization routes
+			protected.GET("/organizations", orgHandler.ListOrganizations)
 			protected.PUT("/organizations/:orgID", orgHandler.UpdateOrganization)
 			protected.DELETE("/organizations/:orgID", orgHandler.DeleteOrganization)
 			protected.POST("/organizations/:orgID/invite", orgHandler.InviteUser)
@@ -231,6 +249,8 @@ func main() {
 			protected.GET("/users/me", userHandler.GetCurrentUser)
 			protected.GET("/users/:userID", userHandler.GetUser)
 			protected.PUT("/users/:userID", userHandler.UpdateUser)
+			protected.POST("/users/:userID/profile-picture", userHandler.UploadProfilePicture)
+			protected.DELETE("/users/:userID/profile-picture", userHandler.DeleteProfilePicture)
 			protected.DELETE("/users/:userID", userHandler.DeleteUser)
 
 			// API Key routes

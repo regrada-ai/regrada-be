@@ -117,13 +117,15 @@ const (
 type DBUser struct {
 	bun.BaseModel `bun:"table:users,alias:u"`
 
-	ID        string     `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
-	Email     string     `bun:"email,notnull,unique"`
-	IDPSub    string     `bun:"idp_sub,notnull,unique"` // Cognito subject identifier
-	Name      string     `bun:"name"`
-	CreatedAt time.Time  `bun:"created_at,notnull,default:now()"`
-	UpdatedAt time.Time  `bun:"updated_at,notnull,default:now()"`
-	DeletedAt *time.Time `bun:"deleted_at,soft_delete"`
+	ID             string     `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
+	Email          string     `bun:"email,notnull,unique"`
+	IDPSub         string     `bun:"idp_sub,notnull,unique"` // Cognito subject identifier
+	Name           string     `bun:"name"`
+	ProfilePicture string     `bun:"profile_picture"`
+	Role           UserRole   `bun:"role,notnull,default:'user'"`
+	CreatedAt      time.Time  `bun:"created_at,notnull,default:now()"`
+	UpdatedAt      time.Time  `bun:"updated_at,notnull,default:now()"`
+	DeletedAt      *time.Time `bun:"deleted_at,soft_delete"`
 }
 
 // DBOrganizationMember represents a user's membership in an organization

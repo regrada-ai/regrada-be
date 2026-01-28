@@ -19,20 +19,21 @@ func NewUserRepository(db *bun.DB) storage.UserRepository {
 
 func (r *userRepository) Create(ctx context.Context, user *storage.User) error {
 	dbUser := &DBUser{
-		ID:        user.ID,
-		Email:     user.Email,
-		IDPSub:    user.IDPSub,
-		Name:      user.Name,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		Email:          user.Email,
+		IDPSub:         user.IDPSub,
+		Name:           user.Name,
+		ProfilePicture: user.ProfilePicture,
+		Role:           UserRole(user.Role),
 	}
 
-	_, err := r.db.NewInsert().Model(dbUser).Exec(ctx)
+	_, err := r.db.NewInsert().Model(dbUser).Returning("*").Exec(ctx)
 	if err != nil {
 		return err
 	}
 
 	user.ID = dbUser.ID
+	user.ProfilePicture = dbUser.ProfilePicture
+	user.Role = storage.UserRole(dbUser.Role)
 	user.CreatedAt = dbUser.CreatedAt
 	user.UpdatedAt = dbUser.UpdatedAt
 	return nil
@@ -54,12 +55,14 @@ func (r *userRepository) GetByID(ctx context.Context, id string) (*storage.User,
 	}
 
 	return &storage.User{
-		ID:        dbUser.ID,
-		Email:     dbUser.Email,
-		IDPSub:    dbUser.IDPSub,
-		Name:      dbUser.Name,
-		CreatedAt: dbUser.CreatedAt,
-		UpdatedAt: dbUser.UpdatedAt,
+		ID:             dbUser.ID,
+		Email:          dbUser.Email,
+		IDPSub:         dbUser.IDPSub,
+		Name:           dbUser.Name,
+		ProfilePicture: dbUser.ProfilePicture,
+		Role:           storage.UserRole(dbUser.Role),
+		CreatedAt:      dbUser.CreatedAt,
+		UpdatedAt:      dbUser.UpdatedAt,
 	}, nil
 }
 
@@ -79,12 +82,14 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*storage
 	}
 
 	return &storage.User{
-		ID:        dbUser.ID,
-		Email:     dbUser.Email,
-		IDPSub:    dbUser.IDPSub,
-		Name:      dbUser.Name,
-		CreatedAt: dbUser.CreatedAt,
-		UpdatedAt: dbUser.UpdatedAt,
+		ID:             dbUser.ID,
+		Email:          dbUser.Email,
+		IDPSub:         dbUser.IDPSub,
+		Name:           dbUser.Name,
+		ProfilePicture: dbUser.ProfilePicture,
+		Role:           storage.UserRole(dbUser.Role),
+		CreatedAt:      dbUser.CreatedAt,
+		UpdatedAt:      dbUser.UpdatedAt,
 	}, nil
 }
 
@@ -104,27 +109,31 @@ func (r *userRepository) GetByIDPSub(ctx context.Context, idpSub string) (*stora
 	}
 
 	return &storage.User{
-		ID:        dbUser.ID,
-		Email:     dbUser.Email,
-		IDPSub:    dbUser.IDPSub,
-		Name:      dbUser.Name,
-		CreatedAt: dbUser.CreatedAt,
-		UpdatedAt: dbUser.UpdatedAt,
+		ID:             dbUser.ID,
+		Email:          dbUser.Email,
+		IDPSub:         dbUser.IDPSub,
+		Name:           dbUser.Name,
+		ProfilePicture: dbUser.ProfilePicture,
+		Role:           storage.UserRole(dbUser.Role),
+		CreatedAt:      dbUser.CreatedAt,
+		UpdatedAt:      dbUser.UpdatedAt,
 	}, nil
 }
 
 func (r *userRepository) Update(ctx context.Context, user *storage.User) error {
 	dbUser := &DBUser{
-		ID:        user.ID,
-		Email:     user.Email,
-		IDPSub:    user.IDPSub,
-		Name:      user.Name,
-		UpdatedAt: time.Now(),
+		ID:             user.ID,
+		Email:          user.Email,
+		IDPSub:         user.IDPSub,
+		Name:           user.Name,
+		ProfilePicture: user.ProfilePicture,
+		Role:           UserRole(user.Role),
+		UpdatedAt:      time.Now(),
 	}
 
 	res, err := r.db.NewUpdate().
 		Model(dbUser).
-		Column("email", "name", "updated_at").
+		Column("email", "name", "profile_picture", "role", "updated_at").
 		Where("id = ?", user.ID).
 		Where("deleted_at IS NULL").
 		Exec(ctx)

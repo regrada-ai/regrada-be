@@ -23,29 +23,32 @@ const (
 )
 
 type AuthHandler struct {
-	cognitoService *auth.CognitoService
+	authService    auth.Service
 	secureCookies  bool
 	userRepo       storage.UserRepository
 	memberRepo     storage.OrganizationMemberRepository
 	orgRepo        storage.OrganizationRepository
 	inviteRepo     storage.InviteRepository
+	storageService storage.FileStorageService
 }
 
 func NewAuthHandler(
-	cognitoService *auth.CognitoService,
+	authService auth.Service,
 	secureCookies bool,
 	userRepo storage.UserRepository,
 	memberRepo storage.OrganizationMemberRepository,
 	orgRepo storage.OrganizationRepository,
 	inviteRepo storage.InviteRepository,
+	storageService storage.FileStorageService,
 ) *AuthHandler {
 	return &AuthHandler{
-		cognitoService: cognitoService,
+		authService:    authService,
 		secureCookies:  secureCookies,
 		userRepo:       userRepo,
 		memberRepo:     memberRepo,
 		orgRepo:        orgRepo,
 		inviteRepo:     inviteRepo,
+		storageService: storageService,
 	}
 }
 
@@ -151,7 +154,7 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 		org := &storage.Organization{
 			Name: req.OrganizationName,
 			Slug: slug,
-			Tier: "standard",
+			Tier: "free",
 		}
 
 		if err := h.orgRepo.Create(c.Request.Context(), org); err != nil {
@@ -177,7 +180,7 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 		orgID = org.ID
 	}
 
-	result, err := h.cognitoService.SignUp(c.Request.Context(), req.Email, req.Password, req.Name, orgID)
+	result, err := h.authService.SignUp(c.Request.Context(), req.Email, req.Password, req.Name, orgID)
 	if err != nil {
 		log.Printf("SignUp error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -194,6 +197,7 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 		Email:     req.Email,
 		IDPSub:    result.UserSub,
 		Name:      req.Name,
+		Role:      storage.UserRoleUser, // Default role
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -260,7 +264,7 @@ func (h *AuthHandler) ConfirmSignUp(c *gin.Context) {
 		return
 	}
 
-	if err := h.cognitoService.ConfirmSignUp(c.Request.Context(), req.Email, req.Code); err != nil {
+	if err := h.authService.ConfirmSignUp(c.Request.Context(), req.Email, req.Code); err != nil {
 		log.Printf("ConfirmSignUp error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
@@ -294,7 +298,7 @@ func (h *AuthHandler) SignIn(c *gin.Context) {
 		return
 	}
 
-	tokens, err := h.cognitoService.SignIn(c.Request.Context(), req.Email, req.Password)
+	tokens, err := h.authService.SignIn(c.Request.Context(), req.Email, req.Password)
 	if err != nil {
 		log.Printf("SignIn error: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -307,7 +311,7 @@ func (h *AuthHandler) SignIn(c *gin.Context) {
 	}
 
 	// Get user info from Cognito to sync with database
-	userInfo, err := h.cognitoService.GetUser(c.Request.Context(), tokens.AccessToken)
+	userInfo, err := h.authService.GetUser(c.Request.Context(), tokens.AccessToken)
 	if err != nil {
 		log.Printf("Failed to get user info after signin: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -346,7 +350,7 @@ func (h *AuthHandler) SignOut(c *gin.Context) {
 	accessToken, err := c.Cookie(accessTokenCookie)
 	if err == nil && accessToken != "" {
 		// Try to sign out from Cognito (best effort)
-		if err := h.cognitoService.SignOut(c.Request.Context(), accessToken); err != nil {
+		if err := h.authService.SignOut(c.Request.Context(), accessToken); err != nil {
 			log.Printf("Cognito SignOut error (non-fatal): %v", err)
 		}
 	}
@@ -374,7 +378,7 @@ func (h *AuthHandler) Me(c *gin.Context) {
 		return
 	}
 
-	userInfo, err := h.cognitoService.GetUser(c.Request.Context(), accessToken)
+	userInfo, err := h.authService.GetUser(c.Request.Context(), accessToken)
 	if err != nil {
 		log.Printf("GetUser error: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -386,12 +390,33 @@ func (h *AuthHandler) Me(c *gin.Context) {
 		return
 	}
 
+	// Get user from database to return our internal ID
+	user, err := h.userRepo.GetByIDPSub(c.Request.Context(), userInfo.Sub)
+	if err != nil {
+		log.Printf("Failed to get user from database: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to retrieve user information",
+			},
+		})
+		return
+	}
+
+	// Generate CloudFront URL for profile picture if it exists
+	var profilePictureURL string
+	if user.ProfilePicture != "" && h.storageService != nil {
+		profilePictureURL = h.storageService.GetCloudFrontURL(user.ProfilePicture)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"user": gin.H{
+			"id":              user.ID,
 			"sub":             userInfo.Sub,
-			"email":           userInfo.Email,
-			"name":            userInfo.Name,
-			"picture":         userInfo.Picture,
+			"email":           user.Email,
+			"name":            user.Name,
+			"profile_picture": profilePictureURL,
+			"role":            user.Role,
 			"organization_id": userInfo.OrganizationID,
 		},
 	})
@@ -411,7 +436,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	tokens, err := h.cognitoService.RefreshToken(c.Request.Context(), refreshToken)
+	tokens, err := h.authService.RefreshToken(c.Request.Context(), refreshToken)
 	if err != nil {
 		log.Printf("RefreshToken error: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -515,11 +540,13 @@ func (h *AuthHandler) syncUserToDB(ctx context.Context, userInfo *auth.UserInfo)
 
 	// Create new user
 	newUser := &storage.User{
-		Email:     userInfo.Email,
-		IDPSub:    userInfo.Sub,
-		Name:      userInfo.Name,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		Email:          userInfo.Email,
+		IDPSub:         userInfo.Sub,
+		Name:           userInfo.Name,
+		ProfilePicture: userInfo.Picture,
+		Role:           storage.UserRoleUser, // Default role
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
 	}
 
 	if err := h.userRepo.Create(ctx, newUser); err != nil {

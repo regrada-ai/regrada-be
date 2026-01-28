@@ -13,14 +13,14 @@ import (
 )
 
 type OrganizationHandler struct {
-	orgRepo        storage.OrganizationRepository
-	cognitoService *auth.CognitoService
+	orgRepo     storage.OrganizationRepository
+	authService auth.Service
 }
 
-func NewOrganizationHandler(orgRepo storage.OrganizationRepository, cognitoService *auth.CognitoService) *OrganizationHandler {
+func NewOrganizationHandler(orgRepo storage.OrganizationRepository, authService auth.Service) *OrganizationHandler {
 	return &OrganizationHandler{
-		orgRepo:        orgRepo,
-		cognitoService: cognitoService,
+		orgRepo:     orgRepo,
+		authService: authService,
 	}
 }
 
@@ -39,7 +39,6 @@ func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 	var req struct {
 		Name string `json:"name" binding:"required"`
 		Slug string `json:"slug" binding:"required"`
-		Tier string `json:"tier" binding:"required,oneof=standard pro enterprise"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -55,7 +54,7 @@ func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 	org := &storage.Organization{
 		Name: req.Name,
 		Slug: req.Slug,
-		Tier: req.Tier,
+		Tier: "free", // Always create orgs in the lowest tier
 	}
 
 	if err := h.orgRepo.Create(c.Request.Context(), org); err != nil {
@@ -77,10 +76,10 @@ func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 		return
 	}
 
-	if h.cognitoService != nil {
+	if h.authService != nil {
 		accessToken, err := c.Cookie(accessTokenCookie)
 		if err == nil && accessToken != "" {
-			if err := h.cognitoService.UpdateUserOrganization(c.Request.Context(), accessToken, org.ID); err != nil {
+			if err := h.authService.UpdateUserOrganization(c.Request.Context(), accessToken, org.ID); err != nil {
 				log.Printf("Failed to link organization to Cognito user: %v", err)
 			}
 		}
@@ -91,11 +90,11 @@ func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 
 // InviteUser assigns a user to an organization via Cognito.
 func (h *OrganizationHandler) InviteUser(c *gin.Context) {
-	if h.cognitoService == nil {
+	if h.authService == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
 				"code":    "INTERNAL_ERROR",
-				"message": "Cognito is not configured",
+				"message": "Auth service is not configured",
 			},
 		})
 		return
@@ -158,7 +157,7 @@ func (h *OrganizationHandler) InviteUser(c *gin.Context) {
 		return
 	}
 
-	if err := h.cognitoService.AdminUpdateUserOrganization(c.Request.Context(), req.Email, orgID); err != nil {
+	if err := h.authService.AdminUpdateUserOrganization(c.Request.Context(), req.Email, orgID); err != nil {
 		if errors.Is(err, auth.ErrUserNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{
 				"error": gin.H{
@@ -182,6 +181,42 @@ func (h *OrganizationHandler) InviteUser(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 	})
+}
+
+// ListOrganizations retrieves all organizations for the authenticated user
+// @Summary List organizations for user
+// @Description Get all organizations that the authenticated user belongs to
+// @Tags organizations
+// @Produce json
+// @Success 200 {array} types.Organization
+// @Failure 401 {object} types.ErrorResponse
+// @Failure 500 {object} types.ErrorResponse
+// @Router /organizations [get]
+func (h *OrganizationHandler) ListOrganizations(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": gin.H{
+				"code":    "UNAUTHORIZED",
+				"message": "User authentication required",
+			},
+		})
+		return
+	}
+
+	orgs, err := h.orgRepo.GetByUser(c.Request.Context(), userID)
+	if err != nil {
+		log.Printf("Failed to fetch organizations for user %s: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to fetch organizations",
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, orgs)
 }
 
 // GetOrganization retrieves an organization by ID

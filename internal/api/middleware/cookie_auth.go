@@ -15,12 +15,12 @@ const (
 )
 
 type CookieAuthMiddleware struct {
-	cognitoService *auth.CognitoService
+	authService auth.Service
 }
 
-func NewCookieAuthMiddleware(cognitoService *auth.CognitoService) *CookieAuthMiddleware {
+func NewCookieAuthMiddleware(authService auth.Service) *CookieAuthMiddleware {
 	return &CookieAuthMiddleware{
-		cognitoService: cognitoService,
+		authService: authService,
 	}
 }
 
@@ -40,7 +40,7 @@ func (m *CookieAuthMiddleware) Authenticate() gin.HandlerFunc {
 		}
 
 		// Get user info from Cognito using the access token
-		userInfo, err := m.cognitoService.GetUser(c.Request.Context(), accessToken)
+		userInfo, err := m.authService.GetUser(c.Request.Context(), accessToken)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				c.Abort()
@@ -58,6 +58,7 @@ func (m *CookieAuthMiddleware) Authenticate() gin.HandlerFunc {
 		}
 
 		// Store user information in context
+		c.Set("sub", userInfo.Sub)
 		c.Set("user_id", userInfo.Sub)
 		c.Set("email", userInfo.Email)
 		c.Set("name", userInfo.Name)
@@ -76,13 +77,14 @@ func (m *CookieAuthMiddleware) OptionalAuth() gin.HandlerFunc {
 			return
 		}
 
-		userInfo, err := m.cognitoService.GetUser(c.Request.Context(), accessToken)
+		userInfo, err := m.authService.GetUser(c.Request.Context(), accessToken)
 		if err != nil {
 			c.Next()
 			return
 		}
 
 		// Store user information if available
+		c.Set("sub", userInfo.Sub)
 		c.Set("user_id", userInfo.Sub)
 		c.Set("email", userInfo.Email)
 		c.Set("name", userInfo.Name)

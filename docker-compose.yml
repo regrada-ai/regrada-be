@@ -33,6 +33,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.server
+    volumes:
+      - ~/.aws:/root/.aws:ro
     develop:
       watch:
         - action: rebuild

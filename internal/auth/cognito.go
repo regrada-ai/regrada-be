@@ -12,6 +12,9 @@ import (
 	"github.com/aws/smithy-go"
 )
 
+// Ensure CognitoService implements Service interface at compile time
+var _ Service = (*CognitoService)(nil)
+
 type CognitoService struct {
 	client       *cognitoidentityprovider.Client
 	userPoolID   string

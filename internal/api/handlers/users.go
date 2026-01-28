@@ -1,21 +1,25 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/regrada-ai/regrada-be/internal/storage"
+	"github.com/regrada-ai/regrada-be/internal/storage/s3"
 )
 
 type UserHandler struct {
-	userRepo   storage.UserRepository
-	memberRepo storage.OrganizationMemberRepository
+	userRepo       storage.UserRepository
+	memberRepo     storage.OrganizationMemberRepository
+	storageService storage.FileStorageService
 }
 
-func NewUserHandler(userRepo storage.UserRepository, memberRepo storage.OrganizationMemberRepository) *UserHandler {
+func NewUserHandler(userRepo storage.UserRepository, memberRepo storage.OrganizationMemberRepository, storageService storage.FileStorageService) *UserHandler {
 	return &UserHandler{
-		userRepo:   userRepo,
-		memberRepo: memberRepo,
+		userRepo:       userRepo,
+		memberRepo:     memberRepo,
+		storageService: storageService,
 	}
 }
 
@@ -63,8 +67,25 @@ func (h *UserHandler) GetCurrentUser(c *gin.Context) {
 		return
 	}
 
+	// Generate CloudFront URL for profile picture if it exists
+	var profilePictureURL string
+	if user.ProfilePicture != "" && h.storageService != nil {
+		profilePictureURL = h.storageService.GetCloudFrontURL(user.ProfilePicture)
+	}
+
+	// Create response with presigned URL
+	userResponse := gin.H{
+		"id":              user.ID,
+		"email":           user.Email,
+		"name":            user.Name,
+		"profile_picture": profilePictureURL,
+		"role":            user.Role,
+		"created_at":      user.CreatedAt,
+		"updated_at":      user.UpdatedAt,
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"user":        user,
+		"user":        userResponse,
 		"memberships": memberships,
 	})
 }
@@ -93,7 +114,23 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, user)
+	// Generate CloudFront URL for profile picture if it exists
+	var profilePictureURL string
+	if user.ProfilePicture != "" && h.storageService != nil {
+		profilePictureURL = h.storageService.GetCloudFrontURL(user.ProfilePicture)
+	}
+
+	userResponse := gin.H{
+		"id":              user.ID,
+		"email":           user.Email,
+		"name":            user.Name,
+		"profile_picture": profilePictureURL,
+		"role":            user.Role,
+		"created_at":      user.CreatedAt,
+		"updated_at":      user.UpdatedAt,
+	}
+
+	c.JSON(http.StatusOK, userResponse)
 }
 
 // ListOrganizationUsers lists all users in an organization
@@ -140,6 +177,178 @@ func (h *UserHandler) ListOrganizationUsers(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, usersWithRoles)
+}
+
+// UploadProfilePicture uploads a profile picture to S3
+func (h *UserHandler) UploadProfilePicture(c *gin.Context) {
+	userID := c.Param("userID")
+
+	idpSub := c.GetString("sub")
+	currentUser, err := h.userRepo.GetByIDPSub(c.Request.Context(), idpSub)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": gin.H{
+				"code":    "UNAUTHORIZED",
+				"message": "User authentication required",
+			},
+		})
+		return
+	}
+
+	if currentUser.ID != userID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    "FORBIDDEN",
+				"message": "Cannot upload profile picture for a different user",
+			},
+		})
+		return
+	}
+
+	if h.storageService == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "S3_NOT_CONFIGURED",
+				"message": "File upload service is not configured",
+			},
+		})
+		return
+	}
+
+	// Parse multipart form
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"code":    "INVALID_FILE",
+				"message": "No file provided",
+			},
+		})
+		return
+	}
+	defer file.Close()
+
+	// Validate image file
+	if err := s3.ValidateImageFile(header); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"code":    "INVALID_FILE",
+				"message": err.Error(),
+			},
+		})
+		return
+	}
+
+	// Generate S3 key
+	ext := s3.GetFileExtension(header.Filename)
+	s3Key := fmt.Sprintf("users/%s/profile%s", userID, ext)
+
+	// Delete old profile picture if exists
+	if currentUser.ProfilePicture != "" {
+		// Extract S3 key from URL or use as-is if it's already a key
+		oldKey := currentUser.ProfilePicture
+		if err := h.storageService.DeleteFile(c.Request.Context(), oldKey); err != nil {
+			// Log error but don't fail the request
+			// The old file might not exist or might be a URL from another source
+		}
+	}
+
+	// Upload to S3
+	contentType := header.Header.Get("Content-Type")
+	if err := h.storageService.UploadFile(c.Request.Context(), s3Key, file, contentType); err != nil {
+		fmt.Printf("S3 upload failed for key %s: %v\n", s3Key, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "UPLOAD_FAILED",
+				"message": fmt.Sprintf("Failed to upload file: %v", err),
+			},
+		})
+		return
+	}
+
+	// Update user's profile picture in database
+	currentUser.ProfilePicture = s3Key
+	if err := h.userRepo.Update(c.Request.Context(), currentUser); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "UPDATE_FAILED",
+				"message": "Failed to update user profile",
+			},
+		})
+		return
+	}
+
+	// Generate CloudFront URL
+	cloudFrontURL := h.storageService.GetCloudFrontURL(s3Key)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":         true,
+		"s3_key":          s3Key,
+		"url":             cloudFrontURL,
+		"profile_picture": cloudFrontURL,
+	})
+}
+
+// DeleteProfilePicture deletes a user's profile picture from S3
+func (h *UserHandler) DeleteProfilePicture(c *gin.Context) {
+	userID := c.Param("userID")
+
+	idpSub := c.GetString("sub")
+	currentUser, err := h.userRepo.GetByIDPSub(c.Request.Context(), idpSub)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": gin.H{
+				"code":    "UNAUTHORIZED",
+				"message": "User authentication required",
+			},
+		})
+		return
+	}
+
+	if currentUser.ID != userID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    "FORBIDDEN",
+				"message": "Cannot delete profile picture for a different user",
+			},
+		})
+		return
+	}
+
+	if currentUser.ProfilePicture == "" {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": gin.H{
+				"code":    "NOT_FOUND",
+				"message": "No profile picture to delete",
+			},
+		})
+		return
+	}
+
+	// Delete from S3 if service is configured
+	if h.storageService != nil {
+		if err := h.storageService.DeleteFile(c.Request.Context(), currentUser.ProfilePicture); err != nil {
+			// Log error but continue to remove from database
+			// The file might have already been deleted or might not exist
+		}
+	}
+
+	// Remove profile picture reference from database
+	currentUser.ProfilePicture = ""
+	if err := h.userRepo.Update(c.Request.Context(), currentUser); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "UPDATE_FAILED",
+				"message": "Failed to update user profile",
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Profile picture deleted successfully",
+	})
 }
 
 // UpdateUser updates a user
@@ -220,7 +429,23 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, user)
+	// Generate CloudFront URL for profile picture if it exists
+	var profilePictureURL string
+	if user.ProfilePicture != "" && h.storageService != nil {
+		profilePictureURL = h.storageService.GetCloudFrontURL(user.ProfilePicture)
+	}
+
+	userResponse := gin.H{
+		"id":              user.ID,
+		"email":           user.Email,
+		"name":            user.Name,
+		"profile_picture": profilePictureURL,
+		"role":            user.Role,
+		"created_at":      user.CreatedAt,
+		"updated_at":      user.UpdatedAt,
+	}
+
+	c.JSON(http.StatusOK, userResponse)
 }
 
 // DeleteUser soft deletes a user

@@ -19,15 +19,12 @@ func NewOrganizationMemberRepository(db *bun.DB) storage.OrganizationMemberRepos
 
 func (r *organizationMemberRepository) Create(ctx context.Context, member *storage.OrganizationMember) error {
 	dbMember := &DBOrganizationMember{
-		ID:             member.ID,
 		OrganizationID: member.OrganizationID,
 		UserID:         member.UserID,
 		Role:           UserRole(member.Role),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
 	}
 
-	_, err := r.db.NewInsert().Model(dbMember).Exec(ctx)
+	_, err := r.db.NewInsert().Model(dbMember).Returning("*").Exec(ctx)
 	if err != nil {
 		return err
 	}

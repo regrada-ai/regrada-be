@@ -88,6 +88,7 @@ type Organization struct {
 type OrganizationRepository interface {
 	Create(ctx context.Context, org *Organization) error
 	Get(ctx context.Context, id string) (*Organization, error)
+	GetByUser(ctx context.Context, userID string) ([]*Organization, error)
 	Update(ctx context.Context, org *Organization) error
 	Delete(ctx context.Context, id string) error
 }
@@ -103,12 +104,14 @@ const (
 
 // User represents a user
 type User struct {
-	ID        string
-	Email     string
-	IDPSub    string
-	Name      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID             string
+	Email          string
+	IDPSub         string
+	Name           string
+	ProfilePicture string
+	Role           UserRole
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // UserRepository handles user operations

@@ -23,7 +23,7 @@ func (r *OrganizationRepository) Create(ctx context.Context, org *storage.Organi
 		Tier: org.Tier,
 	}
 
-	_, err := r.db.NewInsert().Model(dbOrg).Exec(ctx)
+	_, err := r.db.NewInsert().Model(dbOrg).Returning("*").Exec(ctx)
 	if err != nil {
 		// Check for unique constraint violation
 		if err.Error() == "ERROR: duplicate key value violates unique constraint \"organizations_slug_key\" (SQLSTATE=23505)" {
@@ -33,6 +33,8 @@ func (r *OrganizationRepository) Create(ctx context.Context, org *storage.Organi
 	}
 
 	org.ID = dbOrg.ID
+	org.CreatedAt = dbOrg.CreatedAt
+	org.UpdatedAt = dbOrg.UpdatedAt
 	return nil
 }
 
@@ -61,6 +63,36 @@ func (r *OrganizationRepository) Get(ctx context.Context, id string) (*storage.O
 		CreatedAt:     dbOrg.CreatedAt,
 		UpdatedAt:     dbOrg.UpdatedAt,
 	}, nil
+}
+
+func (r *OrganizationRepository) GetByUser(ctx context.Context, userID string) ([]*storage.Organization, error) {
+	var dbOrgs []*DBOrganization
+	err := r.db.NewSelect().
+		Model(&dbOrgs).
+		Join("JOIN organization_members AS om ON om.organization_id = o.id").
+		Where("om.user_id = ?", userID).
+		Where("o.deleted_at IS NULL").
+		Scan(ctx)
+
+	if err != nil {
+		return nil, err
+	}
+
+	orgs := make([]*storage.Organization, len(dbOrgs))
+	for i, dbOrg := range dbOrgs {
+		orgs[i] = &storage.Organization{
+			ID:            dbOrg.ID,
+			Name:          dbOrg.Name,
+			Slug:          dbOrg.Slug,
+			Tier:          dbOrg.Tier,
+			GitHubOrgID:   dbOrg.GitHubOrgID,
+			GitHubOrgName: dbOrg.GitHubOrgName,
+			CreatedAt:     dbOrg.CreatedAt,
+			UpdatedAt:     dbOrg.UpdatedAt,
+		}
+	}
+
+	return orgs, nil
 }
 
 func (r *OrganizationRepository) Update(ctx context.Context, org *storage.Organization) error {

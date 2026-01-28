@@ -47,7 +47,6 @@ type SignInResponse struct {
 type CreateOrganizationRequest struct {
 	Name string `json:"name" binding:"required" example:"My Company"`
 	Slug string `json:"slug" binding:"required" example:"my-company"`
-	Tier string `json:"tier" binding:"required,oneof=standard pro enterprise" example:"standard"`
 }
 
 // Organization represents an organization
@@ -55,7 +54,7 @@ type Organization struct {
 	ID            string    `json:"id" example:"123e4567-e89b-12d3-a456-426614174000"`
 	Name          string    `json:"name" example:"My Company"`
 	Slug          string    `json:"slug" example:"my-company"`
-	Tier          string    `json:"tier" example:"standard"`
+	Tier          string    `json:"tier" example:"free"`
 	GitHubOrgID   *int64    `json:"github_org_id,omitempty"`
 	GitHubOrgName string    `json:"github_org_name,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -112,11 +111,13 @@ type InviteResponse struct {
 
 // UserResponse represents a user
 type UserResponse struct {
-	ID        string    `json:"id" example:"123e4567-e89b-12d3-a456-426614174000"`
-	Email     string    `json:"email" example:"user@example.com"`
-	Name      string    `json:"name" example:"John Doe"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID             string    `json:"id" example:"123e4567-e89b-12d3-a456-426614174000"`
+	Email          string    `json:"email" example:"user@example.com"`
+	Name           string    `json:"name" example:"John Doe"`
+	ProfilePicture string    `json:"profile_picture,omitempty" example:"https://example.com/avatar.jpg"`
+	Role           string    `json:"role" example:"user"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // SuccessResponse represents a generic success response
