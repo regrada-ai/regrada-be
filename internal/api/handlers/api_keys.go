@@ -52,6 +52,15 @@ func toAPIKeyResponse(key *storage.APIKey) apiKeyResponse {
 }
 
 // ListAPIKeys returns API keys for the authenticated organization.
+// @Summary List API keys
+// @Description Get all API keys for your organization
+// @Tags api-keys
+// @Produce json
+// @Security BearerAuth
+// @Security CookieAuth
+// @Success 200 {object} object{api_keys=[]types.APIKeyResponse,count=int}
+// @Failure 401 {object} types.ErrorResponse
+// @Router /api-keys [get]
 func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 	orgID := c.GetString("organization_id")
 	if orgID == "" {
@@ -87,6 +96,18 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 }
 
 // CreateAPIKey creates a new API key for the authenticated organization.
+// @Summary Create a new API key
+// @Description Create a new API key for your organization. The secret is only returned once.
+// @Tags api-keys
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Security CookieAuth
+// @Param request body types.CreateAPIKeyRequest true "API key details"
+// @Success 201 {object} types.CreateAPIKeyResponse
+// @Failure 400 {object} types.ErrorResponse
+// @Failure 401 {object} types.ErrorResponse
+// @Router /api-keys [post]
 func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 	orgID := c.GetString("organization_id")
 	if orgID == "" {
@@ -210,4 +231,295 @@ func rateLimitForTier(tier string) (int, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// GetAPIKey retrieves a single API key by ID
+func (h *APIKeyHandler) GetAPIKey(c *gin.Context) {
+	orgID := c.GetString("organization_id")
+	if orgID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": gin.H{
+				"code":    "UNAUTHORIZED",
+				"message": "Organization not found in token",
+			},
+		})
+		return
+	}
+
+	keyID := c.Param("keyID")
+
+	key, err := h.apiKeyRepo.GetByID(c.Request.Context(), keyID)
+	if err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{
+					"code":    "NOT_FOUND",
+					"message": "API key not found",
+				},
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to fetch API key",
+			},
+		})
+		return
+	}
+
+	// Verify the key belongs to the requesting organization
+	if key.OrganizationID != orgID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    "FORBIDDEN",
+				"message": "Cannot access API keys from a different organization",
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, toAPIKeyResponse(key))
+}
+
+// UpdateAPIKey updates an existing API key
+func (h *APIKeyHandler) UpdateAPIKey(c *gin.Context) {
+	orgID := c.GetString("organization_id")
+	if orgID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": gin.H{
+				"code":    "UNAUTHORIZED",
+				"message": "Organization not found in token",
+			},
+		})
+		return
+	}
+
+	keyID := c.Param("keyID")
+
+	var req struct {
+		Name      *string    `json:"name"`
+		Tier      *string    `json:"tier"`
+		Scopes    []string   `json:"scopes"`
+		ExpiresAt *time.Time `json:"expires_at"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"code":    "INVALID_REQUEST",
+				"message": err.Error(),
+			},
+		})
+		return
+	}
+
+	key, err := h.apiKeyRepo.GetByID(c.Request.Context(), keyID)
+	if err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{
+					"code":    "NOT_FOUND",
+					"message": "API key not found",
+				},
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to fetch API key",
+			},
+		})
+		return
+	}
+
+	// Verify the key belongs to the requesting organization
+	if key.OrganizationID != orgID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    "FORBIDDEN",
+				"message": "Cannot update API keys from a different organization",
+			},
+		})
+		return
+	}
+
+	// Update fields
+	if req.Name != nil {
+		key.Name = *req.Name
+	}
+	if req.Tier != nil {
+		tier := strings.ToLower(strings.TrimSpace(*req.Tier))
+		rateLimitRPM, ok := rateLimitForTier(tier)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{
+					"code":    "INVALID_REQUEST",
+					"message": "tier must be standard, pro, or enterprise",
+				},
+			})
+			return
+		}
+		key.Tier = tier
+		key.RateLimitRPM = rateLimitRPM
+	}
+	if req.Scopes != nil {
+		key.Scopes = req.Scopes
+	}
+	if req.ExpiresAt != nil {
+		key.ExpiresAt = req.ExpiresAt
+	}
+
+	if err := h.apiKeyRepo.Update(c.Request.Context(), key); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to update API key",
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, toAPIKeyResponse(key))
+}
+
+// RevokeAPIKey revokes an API key
+func (h *APIKeyHandler) RevokeAPIKey(c *gin.Context) {
+	orgID := c.GetString("organization_id")
+	if orgID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": gin.H{
+				"code":    "UNAUTHORIZED",
+				"message": "Organization not found in token",
+			},
+		})
+		return
+	}
+
+	keyID := c.Param("keyID")
+
+	key, err := h.apiKeyRepo.GetByID(c.Request.Context(), keyID)
+	if err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{
+					"code":    "NOT_FOUND",
+					"message": "API key not found",
+				},
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to fetch API key",
+			},
+		})
+		return
+	}
+
+	// Verify the key belongs to the requesting organization
+	if key.OrganizationID != orgID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    "FORBIDDEN",
+				"message": "Cannot revoke API keys from a different organization",
+			},
+		})
+		return
+	}
+
+	if err := h.apiKeyRepo.Revoke(c.Request.Context(), keyID); err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{
+					"code":    "NOT_FOUND",
+					"message": "API key not found or already revoked",
+				},
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to revoke API key",
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+	})
+}
+
+// DeleteAPIKey permanently deletes an API key
+func (h *APIKeyHandler) DeleteAPIKey(c *gin.Context) {
+	orgID := c.GetString("organization_id")
+	if orgID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": gin.H{
+				"code":    "UNAUTHORIZED",
+				"message": "Organization not found in token",
+			},
+		})
+		return
+	}
+
+	keyID := c.Param("keyID")
+
+	key, err := h.apiKeyRepo.GetByID(c.Request.Context(), keyID)
+	if err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{
+					"code":    "NOT_FOUND",
+					"message": "API key not found",
+				},
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to fetch API key",
+			},
+		})
+		return
+	}
+
+	// Verify the key belongs to the requesting organization
+	if key.OrganizationID != orgID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    "FORBIDDEN",
+				"message": "Cannot delete API keys from a different organization",
+			},
+		})
+		return
+	}
+
+	if err := h.apiKeyRepo.Delete(c.Request.Context(), keyID); err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{
+					"code":    "NOT_FOUND",
+					"message": "API key not found",
+				},
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to delete API key",
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+	})
 }

@@ -8,6 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/regrada-ai/regrada-be/internal/auth"
 	"github.com/regrada-ai/regrada-be/internal/storage"
+
+	_ "github.com/regrada-ai/regrada-be/internal/api/types" // for swagger
 )
 
 type OrganizationHandler struct {
@@ -23,6 +25,16 @@ func NewOrganizationHandler(orgRepo storage.OrganizationRepository, cognitoServi
 }
 
 // CreateOrganization creates a new organization
+// @Summary Create a new organization
+// @Description Create a new organization
+// @Tags organizations
+// @Accept json
+// @Produce json
+// @Param request body types.CreateOrganizationRequest true "Organization details"
+// @Success 201 {object} types.Organization
+// @Failure 400 {object} types.ErrorResponse
+// @Failure 409 {object} types.ErrorResponse
+// @Router /organizations [post]
 func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 	var req struct {
 		Name string `json:"name" binding:"required"`
@@ -197,4 +209,125 @@ func (h *OrganizationHandler) GetOrganization(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, org)
+}
+
+// UpdateOrganization updates an organization
+func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
+	orgID := c.Param("orgID")
+
+	userOrgID := c.GetString("organization_id")
+	if userOrgID != orgID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    "FORBIDDEN",
+				"message": "Cannot update a different organization",
+			},
+		})
+		return
+	}
+
+	var req struct {
+		Name          *string `json:"name"`
+		Slug          *string `json:"slug"`
+		Tier          *string `json:"tier"`
+		GitHubOrgID   *int64  `json:"github_org_id"`
+		GitHubOrgName *string `json:"github_org_name"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"code":    "INVALID_REQUEST",
+				"message": err.Error(),
+			},
+		})
+		return
+	}
+
+	org, err := h.orgRepo.Get(c.Request.Context(), orgID)
+	if err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{
+					"code":    "NOT_FOUND",
+					"message": "Organization not found",
+				},
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to fetch organization",
+			},
+		})
+		return
+	}
+
+	if req.Name != nil {
+		org.Name = *req.Name
+	}
+	if req.Slug != nil {
+		org.Slug = *req.Slug
+	}
+	if req.Tier != nil {
+		org.Tier = *req.Tier
+	}
+	if req.GitHubOrgID != nil {
+		org.GitHubOrgID = req.GitHubOrgID
+	}
+	if req.GitHubOrgName != nil {
+		org.GitHubOrgName = *req.GitHubOrgName
+	}
+
+	if err := h.orgRepo.Update(c.Request.Context(), org); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to update organization",
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, org)
+}
+
+// DeleteOrganization soft deletes an organization
+func (h *OrganizationHandler) DeleteOrganization(c *gin.Context) {
+	orgID := c.Param("orgID")
+
+	userOrgID := c.GetString("organization_id")
+	if userOrgID != orgID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    "FORBIDDEN",
+				"message": "Cannot delete a different organization",
+			},
+		})
+		return
+	}
+
+	if err := h.orgRepo.Delete(c.Request.Context(), orgID); err != nil {
+		if err == storage.ErrNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{
+					"code":    "NOT_FOUND",
+					"message": "Organization not found",
+				},
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to delete organization",
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+	})
 }

@@ -13,16 +13,43 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/extra/bundebug"
+	"github.com/uptrace/bun/migrate"
 
 	"github.com/regrada-ai/regrada-be/internal/api/handlers"
 	apimiddleware "github.com/regrada-ai/regrada-be/internal/api/middleware"
 	"github.com/regrada-ai/regrada-be/internal/auth"
+	"github.com/regrada-ai/regrada-be/internal/email"
+	"github.com/regrada-ai/regrada-be/internal/migrations"
 	"github.com/regrada-ai/regrada-be/internal/storage/postgres"
+
+	_ "github.com/regrada-ai/regrada-be/docs" // Swagger docs
 )
+
+// @title Regrada API
+// @version 1.0
+// @description API for LLM trace logging, testing, and regression detection
+
+// @contact.name API Support
+// @contact.email support@regrada.ai
+
+// @license.name MIT
+
+// @host localhost:8080
+// @BasePath /v1
+
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+
+// @securityDefinitions.apikey CookieAuth
+// @in cookie
+// @name access_token
 
 func main() {
 	// Load configuration from environment
@@ -50,13 +77,30 @@ func main() {
 	}
 	log.Println("✓ Connected to PostgreSQL")
 
+	// Run database migrations
+	ctx := context.Background()
+	migrator := migrate.NewMigrator(db, migrations.Migrations)
+	if err := migrator.Init(ctx); err != nil {
+		log.Fatalf("Failed to initialize migrations: %v", err)
+	}
+
+	group, err := migrator.Migrate(ctx)
+	if err != nil {
+		log.Fatalf("Failed to run migrations: %v", err)
+	}
+
+	if group.IsZero() {
+		log.Println("✓ No new migrations to run")
+	} else {
+		log.Printf("✓ Migrated to %s\n", group)
+	}
+
 	// Connect to Redis
 	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
 		log.Fatalf("Failed to parse Redis URL: %v", err)
 	}
 	redisClient := redis.NewClient(opt)
-	ctx := context.Background()
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
@@ -68,6 +112,9 @@ func main() {
 	projectRepo := postgres.NewProjectRepository(db)
 	traceRepo := postgres.NewTraceRepository(db)
 	testRunRepo := postgres.NewTestRunRepository(db)
+	userRepo := postgres.NewUserRepository(db)
+	memberRepo := postgres.NewOrganizationMemberRepository(db)
+	inviteRepo := postgres.NewInviteRepository(db)
 
 	// Initialize Cognito service
 	var cognitoService *auth.CognitoService
@@ -82,6 +129,21 @@ func main() {
 		log.Println("⚠ Cognito service disabled (missing COGNITO_USER_POOL_ID or COGNITO_CLIENT_ID)")
 	}
 
+	// Initialize email service (optional)
+	var emailService *email.Service
+	fromEmail := getEnv("EMAIL_FROM_ADDRESS", "")
+	fromName := getEnv("EMAIL_FROM_NAME", "Regrada")
+	if fromEmail != "" {
+		var err error
+		emailService, err = email.NewService(awsRegion, fromEmail, fromName)
+		if err != nil {
+			log.Fatalf("Failed to initialize email service: %v", err)
+		}
+		log.Println("✓ Email service initialized")
+	} else {
+		log.Println("⚠ Email service disabled (missing EMAIL_FROM_ADDRESS)")
+	}
+
 	// Initialize handlers
 	orgHandler := handlers.NewOrganizationHandler(orgRepo, cognitoService)
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo)
@@ -89,10 +151,16 @@ func main() {
 	traceHandler := handlers.NewTraceHandler(traceRepo, projectRepo)
 	testRunHandler := handlers.NewTestRunHandler(testRunRepo, projectRepo)
 	healthHandler := handlers.NewHealthHandler(sqldb, redisClient)
+	userHandler := handlers.NewUserHandler(userRepo, memberRepo)
+	inviteHandler := handlers.NewInviteHandler(inviteRepo, userRepo, memberRepo)
 
 	var authHandler *handlers.AuthHandler
+	var emailHandler *handlers.EmailHandler
 	if cognitoService != nil {
-		authHandler = handlers.NewAuthHandler(cognitoService, secureCookies)
+		authHandler = handlers.NewAuthHandler(cognitoService, secureCookies, userRepo, memberRepo, orgRepo, inviteRepo)
+	}
+	if emailService != nil {
+		emailHandler = handlers.NewEmailHandler(emailService)
 	}
 
 	// Initialize middleware
@@ -111,6 +179,9 @@ func main() {
 	r := gin.Default()
 	allowedOrigins := strings.Split(getEnv("CORS_ALLOW_ORIGINS", "http://localhost:3000"), ",")
 	r.Use(apimiddleware.NewCORSMiddleware(allowedOrigins))
+
+	// Swagger documentation
+	r.GET("/docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Health check (no auth required)
 	r.GET("/health", healthHandler.Health)
@@ -134,6 +205,7 @@ func main() {
 		// Public routes (no auth required)
 		v1.POST("/organizations", orgHandler.CreateOrganization)
 		v1.GET("/organizations/:orgID", orgHandler.GetOrganization)
+		v1.GET("/invites/:token", inviteHandler.GetInvite)
 
 		// Protected routes with cookie or API key auth
 		eitherAuth := apimiddleware.NewEitherAuthMiddleware(cookieAuthMiddleware, apiKeyAuthMiddleware)
@@ -141,11 +213,42 @@ func main() {
 		protected.Use(eitherAuth.Authenticate())
 		protected.Use(rateLimitMiddleware.Limit())
 		{
+			// Organization routes
+			protected.PUT("/organizations/:orgID", orgHandler.UpdateOrganization)
+			protected.DELETE("/organizations/:orgID", orgHandler.DeleteOrganization)
 			protected.POST("/organizations/:orgID/invite", orgHandler.InviteUser)
-			protected.POST("/projects", projectHandler.CreateProject)
-			protected.GET("/projects", projectHandler.ListProjects)
+			protected.GET("/organizations/:orgID/users", userHandler.ListOrganizationUsers)
+			protected.PUT("/organizations/:orgID/members/:userID", userHandler.UpdateOrganizationMemberRole)
+			protected.DELETE("/organizations/:orgID/members/:userID", userHandler.RemoveOrganizationMember)
+
+			// Invite routes
+			protected.POST("/organizations/:orgID/invites", inviteHandler.CreateInvite)
+			protected.GET("/organizations/:orgID/invites", inviteHandler.ListInvites)
+			protected.POST("/invites/:token/accept", inviteHandler.AcceptInvite)
+			protected.DELETE("/organizations/:orgID/invites/:inviteID", inviteHandler.RevokeInvite)
+
+			// User routes
+			protected.GET("/users/me", userHandler.GetCurrentUser)
+			protected.GET("/users/:userID", userHandler.GetUser)
+			protected.PUT("/users/:userID", userHandler.UpdateUser)
+			protected.DELETE("/users/:userID", userHandler.DeleteUser)
+
+			// API Key routes
 			protected.GET("/api-keys", apiKeyHandler.ListAPIKeys)
 			protected.POST("/api-keys", apiKeyHandler.CreateAPIKey)
+			protected.GET("/api-keys/:keyID", apiKeyHandler.GetAPIKey)
+			protected.PUT("/api-keys/:keyID", apiKeyHandler.UpdateAPIKey)
+			protected.POST("/api-keys/:keyID/revoke", apiKeyHandler.RevokeAPIKey)
+			protected.DELETE("/api-keys/:keyID", apiKeyHandler.DeleteAPIKey)
+
+			// Email route
+			if emailHandler != nil {
+				protected.POST("/email/send", emailHandler.SendEmail)
+			}
+
+			// Project routes
+			protected.POST("/projects", projectHandler.CreateProject)
+			protected.GET("/projects", projectHandler.ListProjects)
 
 			projects := protected.Group("/projects/:projectID")
 			{

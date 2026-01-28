@@ -1,11 +1,16 @@
 package handlers
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/regrada-ai/regrada-be/internal/auth"
+	"github.com/regrada-ai/regrada-be/internal/storage"
 )
 
 const (
@@ -20,22 +25,48 @@ const (
 type AuthHandler struct {
 	cognitoService *auth.CognitoService
 	secureCookies  bool
+	userRepo       storage.UserRepository
+	memberRepo     storage.OrganizationMemberRepository
+	orgRepo        storage.OrganizationRepository
+	inviteRepo     storage.InviteRepository
 }
 
-func NewAuthHandler(cognitoService *auth.CognitoService, secureCookies bool) *AuthHandler {
+func NewAuthHandler(
+	cognitoService *auth.CognitoService,
+	secureCookies bool,
+	userRepo storage.UserRepository,
+	memberRepo storage.OrganizationMemberRepository,
+	orgRepo storage.OrganizationRepository,
+	inviteRepo storage.InviteRepository,
+) *AuthHandler {
 	return &AuthHandler{
 		cognitoService: cognitoService,
 		secureCookies:  secureCookies,
+		userRepo:       userRepo,
+		memberRepo:     memberRepo,
+		orgRepo:        orgRepo,
+		inviteRepo:     inviteRepo,
 	}
 }
 
 // SignUp handles user registration
+// @Summary Register a new user
+// @Description Register a new user account with optional organization creation or invite token
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body object{email=string,password=string,name=string,create_organization=bool,organization_name=string,invite_token=string} true "Signup request"
+// @Success 201 {object} object{success=bool,user_confirmed=bool,organization_id=string,message=string}
+// @Failure 400 {object} object{error=object{code=string,message=string}}
+// @Router /auth/signup [post]
 func (h *AuthHandler) SignUp(c *gin.Context) {
 	var req struct {
-		Email          string `json:"email" binding:"required,email"`
-		Password       string `json:"password" binding:"required,min=8"`
-		Name           string `json:"name" binding:"required"`
-		OrganizationID string `json:"organization_id,omitempty"`
+		Email              string `json:"email" binding:"required,email"`
+		Password           string `json:"password" binding:"required,min=8"`
+		Name               string `json:"name" binding:"required"`
+		CreateOrganization bool   `json:"create_organization,omitempty"`
+		OrganizationName   string `json:"organization_name,omitempty"`
+		InviteToken        string `json:"invite_token,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -48,7 +79,105 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 		return
 	}
 
-	result, err := h.cognitoService.SignUp(c.Request.Context(), req.Email, req.Password, req.Name, req.OrganizationID)
+	var orgID string
+
+	// Handle invite token
+	if req.InviteToken != "" {
+		invite, err := h.inviteRepo.GetByToken(c.Request.Context(), req.InviteToken)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{
+					"code":    "INVALID_INVITE",
+					"message": "Invalid or expired invite token",
+				},
+			})
+			return
+		}
+
+		if invite.AcceptedAt != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{
+					"code":    "INVITE_ALREADY_USED",
+					"message": "This invite has already been accepted",
+				},
+			})
+			return
+		}
+
+		if invite.RevokedAt != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{
+					"code":    "INVITE_REVOKED",
+					"message": "This invite has been revoked",
+				},
+			})
+			return
+		}
+
+		if time.Now().After(invite.ExpiresAt) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{
+					"code":    "INVITE_EXPIRED",
+					"message": "This invite has expired",
+				},
+			})
+			return
+		}
+
+		if !strings.EqualFold(invite.Email, req.Email) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{
+					"code":    "EMAIL_MISMATCH",
+					"message": "Email does not match the invite",
+				},
+			})
+			return
+		}
+
+		orgID = invite.OrganizationID
+	} else if req.CreateOrganization {
+		// Create new organization
+		if req.OrganizationName == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{
+					"code":    "INVALID_REQUEST",
+					"message": "Organization name is required when creating an organization",
+				},
+			})
+			return
+		}
+
+		slug := strings.ToLower(strings.ReplaceAll(req.OrganizationName, " ", "-"))
+		org := &storage.Organization{
+			Name: req.OrganizationName,
+			Slug: slug,
+			Tier: "standard",
+		}
+
+		if err := h.orgRepo.Create(c.Request.Context(), org); err != nil {
+			if err == storage.ErrAlreadyExists {
+				c.JSON(http.StatusConflict, gin.H{
+					"error": gin.H{
+						"code":    "SLUG_EXISTS",
+						"message": "An organization with this name already exists",
+					},
+				})
+				return
+			}
+			log.Printf("Failed to create organization: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": gin.H{
+					"code":    "INTERNAL_ERROR",
+					"message": "Failed to create organization",
+				},
+			})
+			return
+		}
+
+		orgID = org.ID
+	}
+
+	result, err := h.cognitoService.SignUp(c.Request.Context(), req.Email, req.Password, req.Name, orgID)
 	if err != nil {
 		log.Printf("SignUp error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -60,10 +189,57 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 		return
 	}
 
+	// Create user in database
+	user := &storage.User{
+		Email:     req.Email,
+		IDPSub:    result.UserSub,
+		Name:      req.Name,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	if err := h.userRepo.Create(c.Request.Context(), user); err != nil {
+		log.Printf("Failed to create user in database: %v", err)
+		// Continue even if DB creation fails
+	}
+
+	// If organization was created or invite was used, add user as member
+	if orgID != "" {
+		role := storage.UserRoleAdmin
+		if req.InviteToken != "" {
+			// Use role from invite
+			invite, _ := h.inviteRepo.GetByToken(c.Request.Context(), req.InviteToken)
+			if invite != nil {
+				role = invite.Role
+			}
+		}
+
+		member := &storage.OrganizationMember{
+			OrganizationID: orgID,
+			UserID:         user.ID,
+			Role:           role,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
+		}
+
+		if err := h.memberRepo.Create(c.Request.Context(), member); err != nil {
+			log.Printf("Failed to create organization member: %v", err)
+			// Continue even if membership creation fails
+		}
+
+		// Accept the invite if one was used
+		if req.InviteToken != "" {
+			if err := h.inviteRepo.Accept(c.Request.Context(), req.InviteToken, user.ID); err != nil {
+				log.Printf("Failed to accept invite: %v", err)
+			}
+		}
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
-		"success":        true,
-		"user_confirmed": result.UserConfirmed,
-		"message":        "Sign up successful. Please check your email for verification code.",
+		"success":         true,
+		"user_confirmed":  result.UserConfirmed,
+		"organization_id": orgID,
+		"message":         "Sign up successful. Please check your email for verification code.",
 	})
 }
 
@@ -128,6 +304,31 @@ func (h *AuthHandler) SignIn(c *gin.Context) {
 			},
 		})
 		return
+	}
+
+	// Get user info from Cognito to sync with database
+	userInfo, err := h.cognitoService.GetUser(c.Request.Context(), tokens.AccessToken)
+	if err != nil {
+		log.Printf("Failed to get user info after signin: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to retrieve user information",
+			},
+		})
+		return
+	}
+
+	// Create or update user in database
+	if err := h.syncUserToDB(c.Request.Context(), userInfo); err != nil {
+		log.Printf("Failed to sync user to database: %v", err)
+		// Don't fail the signin, just log the error
+	}
+
+	// Handle pending invites
+	if err := h.processPendingInvites(c.Request.Context(), userInfo); err != nil {
+		log.Printf("Failed to process pending invites: %v", err)
+		// Don't fail the signin, just log the error
 	}
 
 	// Set HTTP-only cookies for tokens
@@ -290,4 +491,55 @@ func (h *AuthHandler) clearAuthCookies(c *gin.Context) {
 			true,
 		)
 	}
+}
+
+// syncUserToDB creates or updates a user in the database based on Cognito user info
+func (h *AuthHandler) syncUserToDB(ctx context.Context, userInfo *auth.UserInfo) error {
+	// Check if user exists
+	existingUser, err := h.userRepo.GetByIDPSub(ctx, userInfo.Sub)
+	if err != nil && err != storage.ErrNotFound {
+		return fmt.Errorf("failed to check existing user: %w", err)
+	}
+
+	if existingUser != nil {
+		// User exists, update if needed
+		if existingUser.Email != userInfo.Email || existingUser.Name != userInfo.Name {
+			existingUser.Email = userInfo.Email
+			existingUser.Name = userInfo.Name
+			if err := h.userRepo.Update(ctx, existingUser); err != nil {
+				return fmt.Errorf("failed to update user: %w", err)
+			}
+		}
+		return nil
+	}
+
+	// Create new user
+	newUser := &storage.User{
+		Email:     userInfo.Email,
+		IDPSub:    userInfo.Sub,
+		Name:      userInfo.Name,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	if err := h.userRepo.Create(ctx, newUser); err != nil {
+		return fmt.Errorf("failed to create user: %w", err)
+	}
+
+	return nil
+}
+
+// processPendingInvites checks for pending invites and accepts them
+func (h *AuthHandler) processPendingInvites(ctx context.Context, userInfo *auth.UserInfo) error {
+	// Get user from database
+	_, err := h.userRepo.GetByIDPSub(ctx, userInfo.Sub)
+	if err != nil {
+		return fmt.Errorf("failed to get user: %w", err)
+	}
+
+	// Check if there's a pending invite for this email
+	// Note: We'd need to add a method to list invites by email across all orgs
+	// For now, we'll skip this and handle invite acceptance separately through the invite token flow
+
+	return nil
 }
