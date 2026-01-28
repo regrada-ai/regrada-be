@@ -526,7 +526,7 @@ func (h *AuthHandler) clearAuthCookies(c *gin.Context) {
 
 // syncUserToDB creates or updates a user in the database based on Cognito user info
 func (h *AuthHandler) syncUserToDB(ctx context.Context, userInfo *auth.UserInfo) error {
-	// Check if user exists
+	// Check if user exists by IDPSub
 	existingUser, err := h.userRepo.GetByIDPSub(ctx, userInfo.Sub)
 	if err != nil && err != storage.ErrNotFound {
 		return fmt.Errorf("failed to check existing user: %w", err)
@@ -540,6 +540,23 @@ func (h *AuthHandler) syncUserToDB(ctx context.Context, userInfo *auth.UserInfo)
 			if err := h.userRepo.Update(ctx, existingUser); err != nil {
 				return fmt.Errorf("failed to update user: %w", err)
 			}
+		}
+		return nil
+	}
+
+	// User not found by IDPSub - check if they exist by email (migration case)
+	existingUser, err = h.userRepo.GetByEmail(ctx, userInfo.Email)
+	if err != nil && err != storage.ErrNotFound {
+		return fmt.Errorf("failed to check existing user by email: %w", err)
+	}
+
+	if existingUser != nil {
+		// User exists with this email but different/missing IDPSub - update it
+		existingUser.IDPSub = userInfo.Sub
+		existingUser.Name = userInfo.Name
+		existingUser.UpdatedAt = time.Now()
+		if err := h.userRepo.Update(ctx, existingUser); err != nil {
+			return fmt.Errorf("failed to update user IDPSub: %w", err)
 		}
 		return nil
 	}
