@@ -193,11 +193,17 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 	}
 
 	// Create user in database
+	// Set role based on whether they're creating an org or joining via invite
+	userRole := storage.UserRoleUser
+	if req.CreateOrganization {
+		userRole = storage.UserRoleAdmin
+	}
+
 	user := &storage.User{
 		Email:     req.Email,
 		IDPSub:    result.UserSub,
 		Name:      req.Name,
-		Role:      storage.UserRoleUser, // Default role
+		Role:      userRole,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}

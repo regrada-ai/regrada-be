@@ -10,7 +10,7 @@ import (
 type DBAPIKey struct {
 	bun.BaseModel `bun:"table:api_keys,alias:ak"`
 
-	ID             string     `bun:"id,pk,type:uuid"`
+	ID             string     `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
 	OrganizationID string     `bun:"organization_id,type:uuid,notnull"`
 	KeyHash        string     `bun:"key_hash,notnull,unique"`
 	KeyPrefix      string     `bun:"key_prefix,notnull"`
@@ -28,7 +28,7 @@ type DBAPIKey struct {
 type DBProject struct {
 	bun.BaseModel `bun:"table:projects,alias:p"`
 
-	ID             string     `bun:"id,pk,type:uuid"`
+	ID             string     `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
 	OrganizationID string     `bun:"organization_id,type:uuid,notnull"`
 	Name           string     `bun:"name,notnull"`
 	Slug           string     `bun:"slug,notnull"`
