@@ -143,4 +143,8 @@ err := client.UploadTraces(ctx, traces)
 
 ## License
 
-MIT
+This project is proprietary software licensed under the Regrada
+proprietary license. All rights reserved.
+
+No use, reproduction, modification, or distribution is permitted
+without explicit authorization.
