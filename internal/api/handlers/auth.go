@@ -19,12 +19,12 @@ const (
 	refreshTokenCookie = "refresh_token"
 	cookieMaxAge       = 3600 // 1 hour
 	cookiePath         = "/"
-	cookieDomain       = "" // Empty for localhost, set for production
 )
 
 type AuthHandler struct {
 	authService    auth.Service
 	secureCookies  bool
+	cookieDomain   string
 	userRepo       storage.UserRepository
 	memberRepo     storage.OrganizationMemberRepository
 	orgRepo        storage.OrganizationRepository
@@ -35,6 +35,7 @@ type AuthHandler struct {
 func NewAuthHandler(
 	authService auth.Service,
 	secureCookies bool,
+	cookieDomain string,
 	userRepo storage.UserRepository,
 	memberRepo storage.OrganizationMemberRepository,
 	orgRepo storage.OrganizationRepository,
@@ -44,6 +45,7 @@ func NewAuthHandler(
 	return &AuthHandler{
 		authService:    authService,
 		secureCookies:  secureCookies,
+		cookieDomain:   cookieDomain,
 		userRepo:       userRepo,
 		memberRepo:     memberRepo,
 		orgRepo:        orgRepo,
@@ -476,7 +478,7 @@ func (h *AuthHandler) setAuthCookies(c *gin.Context, tokens *auth.AuthTokens) {
 		tokens.AccessToken,
 		cookieMaxAge,
 		cookiePath,
-		cookieDomain,
+		h.cookieDomain,
 		h.secureCookies, // Secure flag (HTTPS only)
 		true,            // HTTP-only flag
 	)
@@ -488,7 +490,7 @@ func (h *AuthHandler) setAuthCookies(c *gin.Context, tokens *auth.AuthTokens) {
 		tokens.IDToken,
 		cookieMaxAge,
 		cookiePath,
-		cookieDomain,
+		h.cookieDomain,
 		h.secureCookies,
 		true,
 	)
@@ -500,7 +502,7 @@ func (h *AuthHandler) setAuthCookies(c *gin.Context, tokens *auth.AuthTokens) {
 			tokens.RefreshToken,
 			30*24*3600, // 30 days
 			cookiePath,
-			cookieDomain,
+			h.cookieDomain,
 			h.secureCookies,
 			true,
 		)
@@ -517,7 +519,7 @@ func (h *AuthHandler) clearAuthCookies(c *gin.Context) {
 			"",
 			-1, // MaxAge -1 deletes the cookie
 			cookiePath,
-			cookieDomain,
+			h.cookieDomain,
 			h.secureCookies,
 			true,
 		)

@@ -64,6 +64,7 @@ func main() {
 	cognitoClientID := getEnv("COGNITO_CLIENT_ID", "")
 	cognitoClientSecret := getEnv("COGNITO_CLIENT_SECRET", "")
 	secureCookies := getEnv("SECURE_COOKIES", "false") == "true"
+	cookieDomain := getEnv("COOKIE_DOMAIN", "") // e.g., ".regrada.com" for cross-subdomain cookies
 	s3Bucket := getEnv("S3_BUCKET", "")
 	cloudFrontDomain := getEnv("CLOUDFRONT_DOMAIN", "")
 
@@ -137,9 +138,12 @@ func main() {
 	var emailService *email.Service
 	fromEmail := getEnv("EMAIL_FROM_ADDRESS", "")
 	fromName := getEnv("EMAIL_FROM_NAME", "Regrada")
+	adminEmail := getEnv("ADMIN_EMAIL", "")
+	snsTopicArn := getEnv("SNS_TOPIC_ARN", "")
+	contactListName := getEnv("CONTACT_LIST_NAME", "regrada-newsletter")
 	if fromEmail != "" {
 		var err error
-		emailService, err = email.NewService(awsRegion, fromEmail, fromName)
+		emailService, err = email.NewService(awsRegion, fromEmail, fromName, adminEmail, snsTopicArn, contactListName)
 		if err != nil {
 			log.Fatalf("Failed to initialize email service: %v", err)
 		}
@@ -174,7 +178,7 @@ func main() {
 	var authHandler *handlers.AuthHandler
 	var emailHandler *handlers.EmailHandler
 	if authService != nil {
-		authHandler = handlers.NewAuthHandler(authService, secureCookies, userRepo, memberRepo, orgRepo, inviteRepo, storageService)
+		authHandler = handlers.NewAuthHandler(authService, secureCookies, cookieDomain, userRepo, memberRepo, orgRepo, inviteRepo, storageService)
 	}
 	if emailService != nil {
 		emailHandler = handlers.NewEmailHandler(emailService)
@@ -223,6 +227,11 @@ func main() {
 		v1.POST("/organizations", orgHandler.CreateOrganization)
 		v1.GET("/organizations/:orgID", orgHandler.GetOrganization)
 		v1.GET("/invites/:token", inviteHandler.GetInvite)
+
+		// Newsletter signup (public, no auth required)
+		if emailHandler != nil {
+			v1.POST("/newsletter/signup", emailHandler.NewsletterSignup)
+		}
 
 		// Protected routes with cookie or API key auth
 		eitherAuth := apimiddleware.NewEitherAuthMiddleware(cookieAuthMiddleware, apiKeyAuthMiddleware)

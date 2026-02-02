@@ -133,7 +133,7 @@ func (r *userRepository) Update(ctx context.Context, user *storage.User) error {
 
 	res, err := r.db.NewUpdate().
 		Model(dbUser).
-		Column("email", "name", "profile_picture", "role", "updated_at").
+		Column("email", "idp_sub", "name", "profile_picture", "role", "updated_at").
 		Where("id = ?", user.ID).
 		Where("deleted_at IS NULL").
 		Exec(ctx)

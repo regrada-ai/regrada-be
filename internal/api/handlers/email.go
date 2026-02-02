@@ -60,3 +60,36 @@ func (h *EmailHandler) SendEmail(c *gin.Context) {
 		"message": "Email sent successfully",
 	})
 }
+
+// NewsletterSignup handles newsletter signups from the landing page
+func (h *EmailHandler) NewsletterSignup(c *gin.Context) {
+	var req struct {
+		Email string `json:"email" binding:"required,email"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"code":    "INVALID_REQUEST",
+				"message": "Invalid email address",
+			},
+		})
+		return
+	}
+
+	if err := h.emailService.NewsletterSignup(c.Request.Context(), req.Email); err != nil {
+		log.Printf("Failed to process newsletter signup: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "SIGNUP_FAILED",
+				"message": "Failed to process signup. Please try again.",
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Successfully signed up!",
+	})
+}
