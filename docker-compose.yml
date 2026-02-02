@@ -11,7 +11,6 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U regrada"]
       interval: 10s
@@ -33,12 +32,14 @@ services:
   server:
     build:
       context: .
-      dockerfile: docker/Dockerfile.server
-    environment:
-      DATABASE_URL: postgres://regrada:regrada_dev@postgres:5432/regrada?sslmode=disable
-      REDIS_URL: redis://redis:6379
-      PORT: 8080
-      GIN_MODE: release
+      dockerfile: Dockerfile
+    volumes:
+      - ~/.aws:/root/.aws:ro
+    develop:
+      watch:
+        - action: rebuild
+          path: .
+    env_file: .env
     ports:
       - "8080:8080"
     depends_on:

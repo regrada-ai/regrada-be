@@ -6,9 +6,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/uptrace/bun"
 	"github.com/regrada-ai/regrada-be/internal/storage"
 	"github.com/regrada-ai/regrada-be/pkg/regrada"
+	"github.com/uptrace/bun"
 )
 
 type TraceRepository struct {
@@ -124,11 +124,11 @@ func (r *TraceRepository) Get(ctx context.Context, projectID, traceID string) (*
 		},
 	}
 
-	if err := json.Unmarshal(dbTrace.RequestData, &trace.Request); err != nil {
+	if err := decodeJSONField(dbTrace.RequestData, &trace.Request); err != nil {
 		return nil, err
 	}
 
-	if err := json.Unmarshal(dbTrace.ResponseData, &trace.Response); err != nil {
+	if err := decodeJSONField(dbTrace.ResponseData, &trace.Response); err != nil {
 		return nil, err
 	}
 
@@ -168,11 +168,11 @@ func (r *TraceRepository) List(ctx context.Context, projectID string, limit, off
 			},
 		}
 
-		if err := json.Unmarshal(dbTrace.RequestData, &trace.Request); err != nil {
+		if err := decodeJSONField(dbTrace.RequestData, &trace.Request); err != nil {
 			return nil, err
 		}
 
-		if err := json.Unmarshal(dbTrace.ResponseData, &trace.Response); err != nil {
+		if err := decodeJSONField(dbTrace.ResponseData, &trace.Response); err != nil {
 			return nil, err
 		}
 

@@ -22,7 +22,7 @@ func NewProjectHandler(projectRepo storage.ProjectRepository) *ProjectHandler {
 // CreateProject creates a new project
 func (h *ProjectHandler) CreateProject(c *gin.Context) {
 	var req struct {
-		OrganizationID string `json:"organization_id" binding:"required"`
+		OrganizationID string `json:"organization_id,omitempty"`
 		Name           string `json:"name" binding:"required"`
 		Slug           string `json:"slug" binding:"required"`
 		GitHubOwner    string `json:"github_owner"`
@@ -39,8 +39,29 @@ func (h *ProjectHandler) CreateProject(c *gin.Context) {
 		return
 	}
 
+	orgID := c.GetString("organization_id")
+	if orgID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": gin.H{
+				"code":    "UNAUTHORIZED",
+				"message": "Organization not found in token",
+			},
+		})
+		return
+	}
+
+	if req.OrganizationID != "" && req.OrganizationID != orgID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    "FORBIDDEN",
+				"message": "Organization mismatch",
+			},
+		})
+		return
+	}
+
 	project := &storage.Project{
-		OrganizationID: req.OrganizationID,
+		OrganizationID: orgID,
 		Name:           req.Name,
 		Slug:           req.Slug,
 	}
@@ -96,12 +117,12 @@ func (h *ProjectHandler) GetProject(c *gin.Context) {
 
 // ListProjects lists all projects for an organization
 func (h *ProjectHandler) ListProjects(c *gin.Context) {
-	orgID := c.Query("organization_id")
+	orgID := c.GetString("organization_id")
 	if orgID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
+		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": gin.H{
-				"code":    "INVALID_REQUEST",
-				"message": "organization_id query parameter required",
+				"code":    "UNAUTHORIZED",
+				"message": "Organization not found in token",
 			},
 		})
 		return

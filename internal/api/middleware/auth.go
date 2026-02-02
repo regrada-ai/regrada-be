@@ -65,13 +65,16 @@ func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 		ctx := c.Request.Context()
 		cacheKey := "apikey:" + keyHash
 		tierCacheKey := "apikey:tier:" + keyHash
+		orgCacheKey := "apikey:org:" + keyHash
 
 		// Try to get from cache
 		cached, err := m.redisClient.Get(ctx, cacheKey).Result()
 		cachedTier, tierErr := m.redisClient.Get(ctx, tierCacheKey).Result()
-		if err == nil && cached != "" && tierErr == nil && cachedTier != "" {
-			// Key exists in cache with tier info, it's valid
+		cachedOrg, orgErr := m.redisClient.Get(ctx, orgCacheKey).Result()
+		if err == nil && cached != "" && tierErr == nil && cachedTier != "" && orgErr == nil && cachedOrg != "" {
+			// Key exists in cache with org/tier info, it's valid
 			c.Set("api_key_hash", keyHash)
+			c.Set("organization_id", cachedOrg)
 			c.Set("tier", cachedTier)
 			c.Next()
 			return
@@ -126,6 +129,7 @@ func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 		// Cache the valid key and tier for 5 minutes
 		m.redisClient.Set(ctx, cacheKey, "valid", 5*time.Minute)
 		m.redisClient.Set(ctx, tierCacheKey, apiKeyData.Tier, 5*time.Minute)
+		m.redisClient.Set(ctx, orgCacheKey, apiKeyData.OrganizationID, 5*time.Minute)
 
 		// Store in context
 		c.Set("api_key_hash", keyHash)

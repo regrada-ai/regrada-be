@@ -49,3 +49,6 @@ logs/
 *.pem
 *.key
 !*.key.example
+
+# Auto-generated Swagger docs
+docs/

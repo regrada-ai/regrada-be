@@ -4,9 +4,10 @@ package postgres
 
 import (
 	"context"
+	"time"
 
-	"github.com/uptrace/bun"
 	"github.com/regrada-ai/regrada-be/internal/storage"
+	"github.com/uptrace/bun"
 )
 
 type OrganizationRepository struct {
@@ -24,7 +25,7 @@ func (r *OrganizationRepository) Create(ctx context.Context, org *storage.Organi
 		Tier: org.Tier,
 	}
 
-	_, err := r.db.NewInsert().Model(dbOrg).Exec(ctx)
+	_, err := r.db.NewInsert().Model(dbOrg).Returning("*").Exec(ctx)
 	if err != nil {
 		// Check for unique constraint violation
 		if err.Error() == "ERROR: duplicate key value violates unique constraint \"organizations_slug_key\" (SQLSTATE=23505)" {
@@ -34,6 +35,8 @@ func (r *OrganizationRepository) Create(ctx context.Context, org *storage.Organi
 	}
 
 	org.ID = dbOrg.ID
+	org.CreatedAt = dbOrg.CreatedAt
+	org.UpdatedAt = dbOrg.UpdatedAt
 	return nil
 }
 
@@ -59,5 +62,96 @@ func (r *OrganizationRepository) Get(ctx context.Context, id string) (*storage.O
 		Tier:          dbOrg.Tier,
 		GitHubOrgID:   dbOrg.GitHubOrgID,
 		GitHubOrgName: dbOrg.GitHubOrgName,
+		CreatedAt:     dbOrg.CreatedAt,
+		UpdatedAt:     dbOrg.UpdatedAt,
 	}, nil
+}
+
+func (r *OrganizationRepository) GetByUser(ctx context.Context, userID string) ([]*storage.Organization, error) {
+	var dbOrgs []*DBOrganization
+	err := r.db.NewSelect().
+		Model(&dbOrgs).
+		Join("JOIN organization_members AS om ON om.organization_id = o.id").
+		Where("om.user_id = ?", userID).
+		Where("o.deleted_at IS NULL").
+		Scan(ctx)
+
+	if err != nil {
+		return nil, err
+	}
+
+	orgs := make([]*storage.Organization, len(dbOrgs))
+	for i, dbOrg := range dbOrgs {
+		orgs[i] = &storage.Organization{
+			ID:            dbOrg.ID,
+			Name:          dbOrg.Name,
+			Slug:          dbOrg.Slug,
+			Tier:          dbOrg.Tier,
+			GitHubOrgID:   dbOrg.GitHubOrgID,
+			GitHubOrgName: dbOrg.GitHubOrgName,
+			CreatedAt:     dbOrg.CreatedAt,
+			UpdatedAt:     dbOrg.UpdatedAt,
+		}
+	}
+
+	return orgs, nil
+}
+
+func (r *OrganizationRepository) Update(ctx context.Context, org *storage.Organization) error {
+	dbOrg := &DBOrganization{
+		ID:            org.ID,
+		Name:          org.Name,
+		Slug:          org.Slug,
+		Tier:          org.Tier,
+		GitHubOrgID:   org.GitHubOrgID,
+		GitHubOrgName: org.GitHubOrgName,
+		UpdatedAt:     time.Now(),
+	}
+
+	res, err := r.db.NewUpdate().
+		Model(dbOrg).
+		Column("name", "slug", "tier", "github_org_id", "github_org_name", "updated_at").
+		Where("id = ?", org.ID).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return storage.ErrNotFound
+	}
+
+	org.UpdatedAt = dbOrg.UpdatedAt
+	return nil
+}
+
+func (r *OrganizationRepository) Delete(ctx context.Context, id string) error {
+	res, err := r.db.NewUpdate().
+		Model((*DBOrganization)(nil)).
+		Set("deleted_at = ?", time.Now()).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return storage.ErrNotFound
+	}
+
+	return nil
 }
