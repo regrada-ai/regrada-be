@@ -48,23 +48,24 @@ type DBProject struct {
 type DBTrace struct {
 	bun.BaseModel `bun:"table:traces,alias:t"`
 
-	ID               string    `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
-	ProjectID        string    `bun:"project_id,type:uuid,notnull"`
-	TraceID          string    `bun:"trace_id,notnull"`
-	Timestamp        time.Time `bun:"timestamp,notnull"`
-	Provider         string    `bun:"provider,notnull"`
-	Model            string    `bun:"model,notnull"`
-	Environment      string    `bun:"environment"`
-	GitSHA           string    `bun:"git_sha"`
-	GitBranch        string    `bun:"git_branch"`
-	RequestData      []byte    `bun:"request_data,type:jsonb,notnull"`
-	ResponseData     []byte    `bun:"response_data,type:jsonb,notnull"`
-	LatencyMS        int       `bun:"latency_ms"`
-	TokensIn         int       `bun:"tokens_in"`
-	TokensOut        int       `bun:"tokens_out"`
-	RedactionApplied []string  `bun:"redaction_applied,array"`
-	Tags             []string  `bun:"tags,array"`
-	CreatedAt        time.Time `bun:"created_at,notnull,default:now()"`
+	ID               string     `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
+	ProjectID        string     `bun:"project_id,type:uuid,notnull"`
+	TraceID          string     `bun:"trace_id,notnull"`
+	Timestamp        time.Time  `bun:"timestamp,notnull"`
+	Provider         string     `bun:"provider,notnull"`
+	Model            string     `bun:"model,notnull"`
+	Environment      string     `bun:"environment"`
+	GitSHA           string     `bun:"git_sha"`
+	GitBranch        string     `bun:"git_branch"`
+	RequestData      []byte     `bun:"request_data,type:jsonb,notnull"`
+	ResponseData     []byte     `bun:"response_data,type:jsonb,notnull"`
+	LatencyMS        int        `bun:"latency_ms"`
+	TokensIn         int        `bun:"tokens_in"`
+	TokensOut        int        `bun:"tokens_out"`
+	RedactionApplied []string   `bun:"redaction_applied,array"`
+	Tags             []string   `bun:"tags,array"`
+	CreatedAt        time.Time  `bun:"created_at,notnull,default:now()"`
+	DeletedAt        *time.Time `bun:"deleted_at,soft_delete"`
 }
 
 // DBTestRun represents a test run in the database
@@ -89,30 +90,34 @@ type DBTestRun struct {
 	Status           string     `bun:"status,notnull"`
 	CreatedAt        time.Time  `bun:"created_at,notnull,default:now()"`
 	CompletedAt      *time.Time `bun:"completed_at"`
+	DeletedAt        *time.Time `bun:"deleted_at,soft_delete"`
 }
 
 // DBOrganization represents an organization in the database
 type DBOrganization struct {
 	bun.BaseModel `bun:"table:organizations,alias:o"`
 
-	ID            string     `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
-	Name          string     `bun:"name,notnull"`
-	Slug          string     `bun:"slug,notnull,unique"`
-	Tier          string     `bun:"tier,notnull"`
-	GitHubOrgID   *int64     `bun:"github_org_id"`
-	GitHubOrgName string     `bun:"github_org_name"`
-	CreatedAt     time.Time  `bun:"created_at,notnull,default:now()"`
-	UpdatedAt     time.Time  `bun:"updated_at,notnull,default:now()"`
-	DeletedAt     *time.Time `bun:"deleted_at,soft_delete"`
+	ID                  string     `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
+	Name                string     `bun:"name,notnull"`
+	Slug                string     `bun:"slug,notnull,unique"`
+	Tier                string     `bun:"tier,notnull"`
+	GitHubOrgID         *int64     `bun:"github_org_id"`
+	GitHubOrgName       string     `bun:"github_org_name"`
+	MonthlyRequestLimit int64      `bun:"monthly_request_limit,notnull,default:50000"`
+	MonthlyRequestCount int64      `bun:"monthly_request_count,notnull,default:0"`
+	UsageResetAt        time.Time  `bun:"usage_reset_at,notnull"`
+	CreatedAt           time.Time  `bun:"created_at,notnull,default:now()"`
+	UpdatedAt           time.Time  `bun:"updated_at,notnull,default:now()"`
+	DeletedAt           *time.Time `bun:"deleted_at,soft_delete"`
 }
 
 // UserRole represents the role a user can have in an organization
 type UserRole string
 
 const (
-	UserRoleAdmin        UserRole = "admin"
-	UserRoleUser         UserRole = "user"
-	UserRoleReadonlyUser UserRole = "readonly-user"
+	UserRoleAdmin  UserRole = "admin"
+	UserRoleMember UserRole = "member"
+	UserRoleViewer UserRole = "viewer"
 )
 
 // DBUser represents a user in the database
@@ -124,7 +129,6 @@ type DBUser struct {
 	IDPSub         string     `bun:"idp_sub,notnull,unique"` // Cognito subject identifier
 	Name           string     `bun:"name"`
 	ProfilePicture string     `bun:"profile_picture"`
-	Role           UserRole   `bun:"role,notnull,default:'user'"`
 	CreatedAt      time.Time  `bun:"created_at,notnull,default:now()"`
 	UpdatedAt      time.Time  `bun:"updated_at,notnull,default:now()"`
 	DeletedAt      *time.Time `bun:"deleted_at,soft_delete"`
@@ -134,12 +138,13 @@ type DBUser struct {
 type DBOrganizationMember struct {
 	bun.BaseModel `bun:"table:organization_members,alias:om"`
 
-	ID             string    `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
-	OrganizationID string    `bun:"organization_id,type:uuid,notnull"`
-	UserID         string    `bun:"user_id,type:uuid,notnull"`
-	Role           UserRole  `bun:"role,notnull,default:'user'"`
-	CreatedAt      time.Time `bun:"created_at,notnull,default:now()"`
-	UpdatedAt      time.Time `bun:"updated_at,notnull,default:now()"`
+	ID             string     `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
+	OrganizationID string     `bun:"organization_id,type:uuid,notnull"`
+	UserID         string     `bun:"user_id,type:uuid,notnull"`
+	Role           UserRole   `bun:"role,notnull,default:'member'"`
+	CreatedAt      time.Time  `bun:"created_at,notnull,default:now()"`
+	UpdatedAt      time.Time  `bun:"updated_at,notnull,default:now()"`
+	DeletedAt      *time.Time `bun:"deleted_at,soft_delete"`
 }
 
 // DBInvite represents an invitation to join an organization
@@ -149,7 +154,7 @@ type DBInvite struct {
 	ID             string     `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
 	OrganizationID string     `bun:"organization_id,type:uuid,notnull"`
 	Email          string     `bun:"email,notnull"`
-	Role           UserRole   `bun:"role,notnull,default:'user'"`
+	Role           UserRole   `bun:"role,notnull,default:'member'"`
 	Token          string     `bun:"token,notnull,unique"`
 	InvitedBy      *string    `bun:"invited_by,type:uuid"`
 	AcceptedAt     *time.Time `bun:"accepted_at"`

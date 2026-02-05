@@ -74,7 +74,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Create a new API key for your organization. The secret is only returned once.",
+                "description": "Create a new API key for your organization. The secret is only returned once. The API key tier is inherited from the organization's tier.",
                 "consumes": [
                     "application/json"
                 ],
@@ -113,6 +113,179 @@ const docTemplate = `{
                         "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/google": {
+            "post": {
+                "description": "Exchanges OAuth authorization code for tokens and creates a session",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Sign in with Google (OAuth)",
+                "parameters": [
+                    {
+                        "description": "OAuth authorization code and redirect URI",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "code": {
+                                    "type": "string"
+                                },
+                                "redirect_uri": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "success": {
+                                    "type": "boolean"
+                                },
+                                "user": {
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "object",
+                                    "properties": {
+                                        "code": {
+                                            "type": "string"
+                                        },
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "object",
+                                    "properties": {
+                                        "code": {
+                                            "type": "string"
+                                        },
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/setup-organization": {
+            "post": {
+                "description": "Creates an organization for the current user and adds them as admin",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Setup organization for current user",
+                "parameters": [
+                    {
+                        "description": "Organization setup request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "organization_name": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "organization_id": {
+                                    "type": "string"
+                                },
+                                "success": {
+                                    "type": "boolean"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "object",
+                                    "properties": {
+                                        "code": {
+                                            "type": "string"
+                                        },
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "object",
+                                    "properties": {
+                                        "code": {
+                                            "type": "string"
+                                        },
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -237,6 +410,39 @@ const docTemplate = `{
             }
         },
         "/organizations": {
+            "get": {
+                "description": "Get all organizations that the authenticated user belongs to",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "organizations"
+                ],
+                "summary": "List organizations for user",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/types.Organization"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    }
+                }
+            },
             "post": {
                 "description": "Create a new organization",
                 "consumes": [
@@ -364,7 +570,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/regrada.TestRun"
+                            "$ref": "#/definitions/domain.TestRun"
                         }
                     }
                 ],
@@ -438,7 +644,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Test run details",
                         "schema": {
-                            "$ref": "#/definitions/regrada.TestRun"
+                            "$ref": "#/definitions/domain.TestRun"
                         }
                     },
                     "401": {
@@ -547,7 +753,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/regrada.Trace"
+                            "$ref": "#/definitions/domain.Trace"
                         }
                     }
                 ],
@@ -690,7 +896,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Trace details",
                         "schema": {
-                            "$ref": "#/definitions/regrada.Trace"
+                            "$ref": "#/definitions/domain.Trace"
                         }
                     },
                     "401": {
@@ -719,7 +925,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "regrada.Message": {
+        "domain.Message": {
             "type": "object",
             "properties": {
                 "content": {
@@ -730,7 +936,7 @@ const docTemplate = `{
                 }
             }
         },
-        "regrada.SamplingParams": {
+        "domain.SamplingParams": {
             "type": "object",
             "properties": {
                 "max_output_tokens": {
@@ -750,23 +956,23 @@ const docTemplate = `{
                 }
             }
         },
-        "regrada.TestRun": {
+        "domain.TestRun": {
             "type": "object"
         },
-        "regrada.Trace": {
+        "domain.Trace": {
             "type": "object"
         },
-        "regrada.TraceRequest": {
+        "domain.TraceRequest": {
             "type": "object",
             "properties": {
                 "messages": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/regrada.Message"
+                        "$ref": "#/definitions/domain.Message"
                     }
                 },
                 "params": {
-                    "$ref": "#/definitions/regrada.SamplingParams"
+                    "$ref": "#/definitions/domain.SamplingParams"
                 }
             }
         },
@@ -813,15 +1019,14 @@ const docTemplate = `{
                 },
                 "tier": {
                     "type": "string",
-                    "example": "standard"
+                    "example": "team"
                 }
             }
         },
         "types.CreateAPIKeyRequest": {
             "type": "object",
             "required": [
-                "name",
-                "tier"
+                "name"
             ],
             "properties": {
                 "expires_at": {
@@ -840,10 +1045,6 @@ const docTemplate = `{
                         "traces:write",
                         "tests:write"
                     ]
-                },
-                "tier": {
-                    "type": "string",
-                    "example": "standard"
                 }
             }
         },
@@ -863,8 +1064,7 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "name",
-                "slug",
-                "tier"
+                "slug"
             ],
             "properties": {
                 "name": {
@@ -874,15 +1074,6 @@ const docTemplate = `{
                 "slug": {
                     "type": "string",
                     "example": "my-company"
-                },
-                "tier": {
-                    "type": "string",
-                    "enum": [
-                        "standard",
-                        "pro",
-                        "enterprise"
-                    ],
-                    "example": "standard"
                 }
             }
         },
@@ -923,6 +1114,14 @@ const docTemplate = `{
                     "type": "string",
                     "example": "123e4567-e89b-12d3-a456-426614174000"
                 },
+                "monthly_request_count": {
+                    "type": "integer",
+                    "example": 1234
+                },
+                "monthly_request_limit": {
+                    "type": "integer",
+                    "example": 50000
+                },
                 "name": {
                     "type": "string",
                     "example": "My Company"
@@ -933,9 +1132,12 @@ const docTemplate = `{
                 },
                 "tier": {
                     "type": "string",
-                    "example": "standard"
+                    "example": "starter"
                 },
                 "updated_at": {
+                    "type": "string"
+                },
+                "usage_reset_at": {
                     "type": "string"
                 }
             }

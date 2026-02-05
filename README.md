@@ -118,17 +118,6 @@ Authorization: Bearer rg_live_<key>
 - `GET /v1/projects/:id/test-runs/:runID` - Get a specific test run
 - `GET /health` - Health check endpoint
 
-## Shared Types Package
-
-The `pkg/regrada/` package contains shared types used by both the backend and CLI:
-
-```go
-import "github.com/regrada-ai/regrada-be/pkg/regrada"
-
-client := regrada.NewClient(apiKey, projectID)
-err := client.UploadTraces(ctx, traces)
-```
-
 ## Development Roadmap
 
 - [x] Phase 1: Core backend (Weeks 1-4)

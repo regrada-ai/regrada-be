@@ -6,8 +6,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/regrada-ai/regrada-be/internal/domain"
 	"github.com/regrada-ai/regrada-be/internal/storage"
-	"github.com/regrada-ai/regrada-be/pkg/regrada"
 )
 
 type TraceHandler struct {
@@ -29,7 +29,7 @@ func NewTraceHandler(traceRepo storage.TraceRepository, projectRepo storage.Proj
 // @Accept       json
 // @Produce      json
 // @Param        projectID  path      string         true  "Project ID"
-// @Param        trace      body      regrada.Trace  true  "Trace data"
+// @Param        trace      body      domain.Trace  true  "Trace data"
 // @Success      201        {object}  map[string]interface{} "Trace created successfully"
 // @Failure      400        {object}  map[string]interface{} "Invalid request"
 // @Failure      401        {object}  map[string]interface{} "Unauthorized"
@@ -39,7 +39,7 @@ func NewTraceHandler(traceRepo storage.TraceRepository, projectRepo storage.Proj
 func (h *TraceHandler) UploadTrace(c *gin.Context) {
 	projectID := c.Param("projectID")
 
-	var trace regrada.Trace
+	var trace domain.Trace
 	if err := c.ShouldBindJSON(&trace); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
@@ -85,7 +85,7 @@ func (h *TraceHandler) UploadTracesBatch(c *gin.Context) {
 	projectID := c.Param("projectID")
 
 	var req struct {
-		Traces []regrada.Trace `json:"traces" binding:"required"`
+		Traces []domain.Trace `json:"traces" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -176,7 +176,7 @@ func (h *TraceHandler) ListTraces(c *gin.Context) {
 // @Produce      json
 // @Param        projectID  path      string  true  "Project ID"
 // @Param        traceID    path      string  true  "Trace ID"
-// @Success      200        {object}  regrada.Trace "Trace details"
+// @Success      200        {object}  domain.Trace "Trace details"
 // @Failure      401        {object}  map[string]interface{} "Unauthorized"
 // @Failure      404        {object}  map[string]interface{} "Trace not found"
 // @Failure      500        {object}  map[string]interface{} "Internal server error"

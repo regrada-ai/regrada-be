@@ -180,6 +180,18 @@ func (r *APIKeyRepository) Update(ctx context.Context, apiKey *storage.APIKey) e
 	return nil
 }
 
+func (r *APIKeyRepository) UpdateTierByOrganization(ctx context.Context, orgID, tier string, rateLimitRPM int) error {
+	_, err := r.db.NewUpdate().
+		Model((*DBAPIKey)(nil)).
+		Set("tier = ?", tier).
+		Set("rate_limit_rpm = ?", rateLimitRPM).
+		Where("organization_id = ?", orgID).
+		Where("revoked_at IS NULL").
+		Exec(ctx)
+
+	return err
+}
+
 func (r *APIKeyRepository) Revoke(ctx context.Context, id string) error {
 	res, err := r.db.NewUpdate().
 		Model((*DBAPIKey)(nil)).

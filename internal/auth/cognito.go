@@ -2,27 +2,34 @@ package auth
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
 	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider/types"
-	"github.com/aws/smithy-go"
+	"github.com/lestrrat-go/jwx/v2/jwk"
+	"github.com/lestrrat-go/jwx/v2/jwt"
 )
 
 // Ensure CognitoService implements Service interface at compile time
 var _ Service = (*CognitoService)(nil)
 
 type CognitoService struct {
-	client       *cognitoidentityprovider.Client
-	userPoolID   string
-	clientID     string
-	clientSecret string
+	client        *cognitoidentityprovider.Client
+	userPoolID    string
+	clientID      string
+	clientSecret  string
+	region        string
+	cognitoDomain string
+	jwkCache      *jwk.Cache
 }
 
-func NewCognitoService(region, userPoolID, clientID, clientSecret string) (*CognitoService, error) {
+func NewCognitoService(region, userPoolID, clientID, clientSecret, cognitoDomain string) (*CognitoService, error) {
 	cfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithRegion(region),
 	)
@@ -32,16 +39,26 @@ func NewCognitoService(region, userPoolID, clientID, clientSecret string) (*Cogn
 
 	client := cognitoidentityprovider.NewFromConfig(cfg)
 
+	// Set up JWK cache for token validation
+	jwksURL := fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s/.well-known/jwks.json", region, userPoolID)
+	cache := jwk.NewCache(context.Background())
+	if err := cache.Register(jwksURL); err != nil {
+		return nil, fmt.Errorf("failed to register JWKS URL: %w", err)
+	}
+
 	return &CognitoService{
-		client:       client,
-		userPoolID:   userPoolID,
-		clientID:     clientID,
-		clientSecret: clientSecret,
+		client:        client,
+		userPoolID:    userPoolID,
+		clientID:      clientID,
+		clientSecret:  clientSecret,
+		region:        region,
+		cognitoDomain: cognitoDomain,
+		jwkCache:      cache,
 	}, nil
 }
 
 // SignUp creates a new user in Cognito
-func (s *CognitoService) SignUp(ctx context.Context, email, password, name, organizationID string) (*SignUpResult, error) {
+func (s *CognitoService) SignUp(ctx context.Context, email, password, name string) (*SignUpResult, error) {
 	input := &cognitoidentityprovider.SignUpInput{
 		ClientId: aws.String(s.clientID),
 		Username: aws.String(email),
@@ -56,13 +73,6 @@ func (s *CognitoService) SignUp(ctx context.Context, email, password, name, orga
 				Value: aws.String(name),
 			},
 		},
-	}
-
-	if organizationID != "" {
-		input.UserAttributes = append(input.UserAttributes, types.AttributeType{
-			Name:  aws.String("custom:organization_id"),
-			Value: aws.String(organizationID),
-		})
 	}
 
 	// Add secret hash if client secret is configured
@@ -179,59 +189,16 @@ func (s *CognitoService) GetUser(ctx context.Context, accessToken string) (*User
 			userInfo.Sub = aws.ToString(attr.Value)
 		case "email":
 			userInfo.Email = aws.ToString(attr.Value)
+		case "email_verified":
+			userInfo.EmailVerified = aws.ToString(attr.Value) == "true"
 		case "name":
 			userInfo.Name = aws.ToString(attr.Value)
-		case "custom:organization_id":
-			userInfo.OrganizationID = aws.ToString(attr.Value)
 		case "picture":
 			userInfo.Picture = aws.ToString(attr.Value)
 		}
 	}
 
 	return userInfo, nil
-}
-
-// AdminUpdateUserOrganization sets the custom organization_id attribute for a user by username.
-func (s *CognitoService) AdminUpdateUserOrganization(ctx context.Context, username, organizationID string) error {
-	input := &cognitoidentityprovider.AdminUpdateUserAttributesInput{
-		UserPoolId: aws.String(s.userPoolID),
-		Username:   aws.String(username),
-		UserAttributes: []types.AttributeType{
-			{
-				Name:  aws.String("custom:organization_id"),
-				Value: aws.String(organizationID),
-			},
-		},
-	}
-
-	if _, err := s.client.AdminUpdateUserAttributes(ctx, input); err != nil {
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "UserNotFoundException" {
-			return ErrUserNotFound
-		}
-		return fmt.Errorf("admin update user attributes failed: %w", err)
-	}
-
-	return nil
-}
-
-// UpdateUserOrganization sets the custom organization_id attribute for the current user.
-func (s *CognitoService) UpdateUserOrganization(ctx context.Context, accessToken, organizationID string) error {
-	input := &cognitoidentityprovider.UpdateUserAttributesInput{
-		AccessToken: aws.String(accessToken),
-		UserAttributes: []types.AttributeType{
-			{
-				Name:  aws.String("custom:organization_id"),
-				Value: aws.String(organizationID),
-			},
-		},
-	}
-
-	if _, err := s.client.UpdateUserAttributes(ctx, input); err != nil {
-		return fmt.Errorf("update user attributes failed: %w", err)
-	}
-
-	return nil
 }
 
 // SignOut globally signs out a user
@@ -246,4 +213,127 @@ func (s *CognitoService) SignOut(ctx context.Context, accessToken string) error 
 	}
 
 	return nil
+}
+
+// ValidateIDToken validates a Cognito ID token and extracts user info
+// This is used for OAuth flows (Google sign-in) where the frontend has the tokens
+func (s *CognitoService) ValidateIDToken(ctx context.Context, idToken string) (*UserInfo, *AuthTokens, error) {
+	jwksURL := fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s/.well-known/jwks.json", s.region, s.userPoolID)
+
+	// Fetch the key set from cache
+	keySet, err := s.jwkCache.Get(ctx, jwksURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch JWKS: %w", err)
+	}
+
+	// Parse and validate the token
+	token, err := jwt.Parse([]byte(idToken),
+		jwt.WithKeySet(keySet),
+		jwt.WithValidate(true),
+		jwt.WithIssuer(fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s", s.region, s.userPoolID)),
+		jwt.WithAudience(s.clientID),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid ID token: %w", err)
+	}
+
+	// Extract claims
+	claims := token.PrivateClaims()
+
+	userInfo := &UserInfo{
+		Sub: token.Subject(),
+	}
+
+	if email, ok := claims["email"].(string); ok {
+		userInfo.Email = email
+	}
+	if emailVerified, ok := claims["email_verified"].(bool); ok {
+		userInfo.EmailVerified = emailVerified
+	}
+
+	// Try to get name from various possible claim locations
+	// Google/Cognito federated users might have name in different places
+	if name, ok := claims["name"].(string); ok && name != "" {
+		userInfo.Name = name
+	} else {
+		// Fall back to constructing name from given_name and family_name
+		var givenName, familyName string
+		if gn, ok := claims["given_name"].(string); ok {
+			givenName = gn
+		}
+		if fn, ok := claims["family_name"].(string); ok {
+			familyName = fn
+		}
+		if givenName != "" || familyName != "" {
+			userInfo.Name = strings.TrimSpace(givenName + " " + familyName)
+		}
+	}
+
+	// Try to get picture from various possible claim locations
+	if picture, ok := claims["picture"].(string); ok && picture != "" {
+		userInfo.Picture = picture
+	}
+
+	if username, ok := claims["cognito:username"].(string); ok {
+		userInfo.Username = username
+	}
+
+	// For OAuth flows, the frontend already has the tokens from Cognito
+	// We return nil for AuthTokens since the frontend should pass them separately
+	return userInfo, nil, nil
+}
+
+// ExchangeCodeForTokens exchanges an OAuth authorization code for tokens
+// This is the secure server-side flow where the client secret is kept on the backend
+func (s *CognitoService) ExchangeCodeForTokens(ctx context.Context, code, redirectURI string) (*AuthTokens, error) {
+	tokenURL := fmt.Sprintf("https://%s/oauth2/token", s.cognitoDomain)
+
+	data := url.Values{}
+	data.Set("grant_type", "authorization_code")
+	data.Set("client_id", s.clientID)
+	data.Set("client_secret", s.clientSecret)
+	data.Set("code", code)
+	data.Set("redirect_uri", redirectURI)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", tokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create token request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errResp struct {
+			Error            string `json:"error"`
+			ErrorDescription string `json:"error_description"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err == nil {
+			return nil, fmt.Errorf("token exchange failed: %s - %s", errResp.Error, errResp.ErrorDescription)
+		}
+		return nil, fmt.Errorf("token exchange failed with status: %d", resp.StatusCode)
+	}
+
+	var tokenResp struct {
+		AccessToken  string `json:"access_token"`
+		IDToken      string `json:"id_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int32  `json:"expires_in"`
+		TokenType    string `json:"token_type"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return nil, fmt.Errorf("failed to decode token response: %w", err)
+	}
+
+	return &AuthTokens{
+		AccessToken:  tokenResp.AccessToken,
+		IDToken:      tokenResp.IDToken,
+		RefreshToken: tokenResp.RefreshToken,
+		ExpiresIn:    tokenResp.ExpiresIn,
+	}, nil
 }

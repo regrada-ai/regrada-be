@@ -5,9 +5,10 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"time"
 
+	"github.com/regrada-ai/regrada-be/internal/domain"
 	"github.com/regrada-ai/regrada-be/internal/storage"
-	"github.com/regrada-ai/regrada-be/pkg/regrada"
 	"github.com/uptrace/bun"
 )
 
@@ -19,7 +20,7 @@ func NewTestRunRepository(db *bun.DB) *TestRunRepository {
 	return &TestRunRepository{db: db}
 }
 
-func (r *TestRunRepository) Create(ctx context.Context, projectID string, testRun *regrada.TestRun) error {
+func (r *TestRunRepository) Create(ctx context.Context, projectID string, testRun *domain.TestRun) error {
 	resultsData, err := json.Marshal(testRun.Results)
 	if err != nil {
 		return err
@@ -56,12 +57,13 @@ func (r *TestRunRepository) Create(ctx context.Context, projectID string, testRu
 	return err
 }
 
-func (r *TestRunRepository) Get(ctx context.Context, projectID, runID string) (*regrada.TestRun, error) {
+func (r *TestRunRepository) Get(ctx context.Context, projectID, runID string) (*domain.TestRun, error) {
 	var dbTestRun DBTestRun
 	err := r.db.NewSelect().
 		Model(&dbTestRun).
 		Where("project_id = ?", projectID).
 		Where("run_id = ?", runID).
+		Where("deleted_at IS NULL").
 		Scan(ctx)
 
 	if err != nil {
@@ -71,7 +73,7 @@ func (r *TestRunRepository) Get(ctx context.Context, projectID, runID string) (*
 		return nil, err
 	}
 
-	testRun := &regrada.TestRun{
+	testRun := &domain.TestRun{
 		RunID:            dbTestRun.RunID,
 		Timestamp:        dbTestRun.Timestamp,
 		GitSHA:           dbTestRun.GitSHA,
@@ -87,13 +89,13 @@ func (r *TestRunRepository) Get(ctx context.Context, projectID, runID string) (*
 	}
 
 	if len(dbTestRun.Results) == 0 {
-		testRun.Results = []regrada.CaseResult{}
+		testRun.Results = []domain.CaseResult{}
 	} else if err := decodeJSONField(dbTestRun.Results, &testRun.Results); err != nil {
 		return nil, err
 	}
 
 	if len(dbTestRun.Violations) == 0 {
-		testRun.Violations = []regrada.Violation{}
+		testRun.Violations = []domain.Violation{}
 	} else if err := decodeJSONField(dbTestRun.Violations, &testRun.Violations); err != nil {
 		return nil, err
 	}
@@ -101,11 +103,12 @@ func (r *TestRunRepository) Get(ctx context.Context, projectID, runID string) (*
 	return testRun, nil
 }
 
-func (r *TestRunRepository) List(ctx context.Context, projectID string, limit, offset int) ([]*regrada.TestRun, error) {
+func (r *TestRunRepository) List(ctx context.Context, projectID string, limit, offset int) ([]*domain.TestRun, error) {
 	var dbTestRuns []DBTestRun
 	err := r.db.NewSelect().
 		Model(&dbTestRuns).
 		Where("project_id = ?", projectID).
+		Where("deleted_at IS NULL").
 		Order("timestamp DESC").
 		Limit(limit).
 		Offset(offset).
@@ -115,9 +118,9 @@ func (r *TestRunRepository) List(ctx context.Context, projectID string, limit, o
 		return nil, err
 	}
 
-	testRuns := make([]*regrada.TestRun, len(dbTestRuns))
+	testRuns := make([]*domain.TestRun, len(dbTestRuns))
 	for i, dbTestRun := range dbTestRuns {
-		testRun := &regrada.TestRun{
+		testRun := &domain.TestRun{
 			RunID:            dbTestRun.RunID,
 			Timestamp:        dbTestRun.Timestamp,
 			GitSHA:           dbTestRun.GitSHA,
@@ -133,13 +136,13 @@ func (r *TestRunRepository) List(ctx context.Context, projectID string, limit, o
 		}
 
 		if len(dbTestRun.Results) == 0 {
-			testRun.Results = []regrada.CaseResult{}
+			testRun.Results = []domain.CaseResult{}
 		} else if err := decodeJSONField(dbTestRun.Results, &testRun.Results); err != nil {
 			return nil, err
 		}
 
 		if len(dbTestRun.Violations) == 0 {
-			testRun.Violations = []regrada.Violation{}
+			testRun.Violations = []domain.Violation{}
 		} else if err := decodeJSONField(dbTestRun.Violations, &testRun.Violations); err != nil {
 			return nil, err
 		}
@@ -148,4 +151,29 @@ func (r *TestRunRepository) List(ctx context.Context, projectID string, limit, o
 	}
 
 	return testRuns, nil
+}
+
+func (r *TestRunRepository) Delete(ctx context.Context, projectID, runID string) error {
+	res, err := r.db.NewUpdate().
+		Model((*DBTestRun)(nil)).
+		Set("deleted_at = ?", time.Now()).
+		Where("project_id = ?", projectID).
+		Where("run_id = ?", runID).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return storage.ErrNotFound
+	}
+
+	return nil
 }

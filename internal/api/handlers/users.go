@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/regrada-ai/regrada-be/internal/storage"
@@ -73,13 +74,19 @@ func (h *UserHandler) GetCurrentUser(c *gin.Context) {
 		profilePictureURL = h.storageService.GetCloudFrontURL(user.ProfilePicture)
 	}
 
+	// Get role from membership
+	var role storage.UserRole
+	if len(memberships) > 0 {
+		role = memberships[0].Role
+	}
+
 	// Create response with presigned URL
 	userResponse := gin.H{
 		"id":              user.ID,
 		"email":           user.Email,
 		"name":            user.Name,
 		"profile_picture": profilePictureURL,
-		"role":            user.Role,
+		"role":            role,
 		"created_at":      user.CreatedAt,
 		"updated_at":      user.UpdatedAt,
 	}
@@ -120,12 +127,18 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 		profilePictureURL = h.storageService.GetCloudFrontURL(user.ProfilePicture)
 	}
 
+	// Get role from membership (users belong to at most one org)
+	var role storage.UserRole
+	if membership, err := h.memberRepo.ListByUser(c.Request.Context(), user.ID); err == nil && len(membership) == 1 {
+		role = membership[0].Role
+	}
+
 	userResponse := gin.H{
 		"id":              user.ID,
 		"email":           user.Email,
 		"name":            user.Name,
 		"profile_picture": profilePictureURL,
-		"role":            user.Role,
+		"role":            role,
 		"created_at":      user.CreatedAt,
 		"updated_at":      user.UpdatedAt,
 	}
@@ -159,24 +172,34 @@ func (h *UserHandler) ListOrganizationUsers(c *gin.Context) {
 		return
 	}
 
-	type UserWithRole struct {
-		*storage.User
-		Role storage.UserRole `json:"role"`
+	type UserResponse struct {
+		ID             string    `json:"id"`
+		Email          string    `json:"email"`
+		Name           string    `json:"name"`
+		ProfilePicture string    `json:"profile_picture,omitempty"`
+		Role           string    `json:"role"`
+		CreatedAt      time.Time `json:"created_at"`
+		UpdatedAt      time.Time `json:"updated_at"`
 	}
 
-	usersWithRoles := make([]UserWithRole, 0, len(members))
+	users := make([]UserResponse, 0, len(members))
 	for _, member := range members {
 		user, err := h.userRepo.GetByID(c.Request.Context(), member.UserID)
 		if err != nil {
 			continue
 		}
-		usersWithRoles = append(usersWithRoles, UserWithRole{
-			User: user,
-			Role: member.Role,
+		users = append(users, UserResponse{
+			ID:             user.ID,
+			Email:          user.Email,
+			Name:           user.Name,
+			ProfilePicture: user.ProfilePicture,
+			Role:           string(member.Role),
+			CreatedAt:      user.CreatedAt,
+			UpdatedAt:      user.UpdatedAt,
 		})
 	}
 
-	c.JSON(http.StatusOK, usersWithRoles)
+	c.JSON(http.StatusOK, users)
 }
 
 // UploadProfilePicture uploads a profile picture to S3
@@ -435,12 +458,18 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 		profilePictureURL = h.storageService.GetCloudFrontURL(user.ProfilePicture)
 	}
 
+	// Get role from membership (users belong to at most one org)
+	var role storage.UserRole
+	if membership, err := h.memberRepo.ListByUser(c.Request.Context(), user.ID); err == nil && len(membership) == 1 {
+		role = membership[0].Role
+	}
+
 	userResponse := gin.H{
 		"id":              user.ID,
 		"email":           user.Email,
 		"name":            user.Name,
 		"profile_picture": profilePictureURL,
-		"role":            user.Role,
+		"role":            role,
 		"created_at":      user.CreatedAt,
 		"updated_at":      user.UpdatedAt,
 	}
@@ -515,7 +544,7 @@ func (h *UserHandler) UpdateOrganizationMemberRole(c *gin.Context) {
 	}
 
 	var req struct {
-		Role storage.UserRole `json:"role" binding:"required,oneof=admin user readonly-user"`
+		Role storage.UserRole `json:"role" binding:"required,oneof=admin member viewer"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {

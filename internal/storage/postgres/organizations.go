@@ -20,9 +20,11 @@ func NewOrganizationRepository(db *bun.DB) *OrganizationRepository {
 
 func (r *OrganizationRepository) Create(ctx context.Context, org *storage.Organization) error {
 	dbOrg := &DBOrganization{
-		Name: org.Name,
-		Slug: org.Slug,
-		Tier: org.Tier,
+		Name:                org.Name,
+		Slug:                org.Slug,
+		Tier:                org.Tier,
+		MonthlyRequestLimit: org.MonthlyRequestLimit,
+		UsageResetAt:        nextMonthStart(),
 	}
 
 	_, err := r.db.NewInsert().Model(dbOrg).Returning("*").Exec(ctx)
@@ -35,9 +37,17 @@ func (r *OrganizationRepository) Create(ctx context.Context, org *storage.Organi
 	}
 
 	org.ID = dbOrg.ID
+	org.MonthlyRequestLimit = dbOrg.MonthlyRequestLimit
+	org.MonthlyRequestCount = dbOrg.MonthlyRequestCount
+	org.UsageResetAt = dbOrg.UsageResetAt
 	org.CreatedAt = dbOrg.CreatedAt
 	org.UpdatedAt = dbOrg.UpdatedAt
 	return nil
+}
+
+func nextMonthStart() time.Time {
+	now := time.Now().UTC()
+	return time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC)
 }
 
 func (r *OrganizationRepository) Get(ctx context.Context, id string) (*storage.Organization, error) {
@@ -56,14 +66,17 @@ func (r *OrganizationRepository) Get(ctx context.Context, id string) (*storage.O
 	}
 
 	return &storage.Organization{
-		ID:            dbOrg.ID,
-		Name:          dbOrg.Name,
-		Slug:          dbOrg.Slug,
-		Tier:          dbOrg.Tier,
-		GitHubOrgID:   dbOrg.GitHubOrgID,
-		GitHubOrgName: dbOrg.GitHubOrgName,
-		CreatedAt:     dbOrg.CreatedAt,
-		UpdatedAt:     dbOrg.UpdatedAt,
+		ID:                  dbOrg.ID,
+		Name:                dbOrg.Name,
+		Slug:                dbOrg.Slug,
+		Tier:                dbOrg.Tier,
+		GitHubOrgID:         dbOrg.GitHubOrgID,
+		GitHubOrgName:       dbOrg.GitHubOrgName,
+		MonthlyRequestLimit: dbOrg.MonthlyRequestLimit,
+		MonthlyRequestCount: dbOrg.MonthlyRequestCount,
+		UsageResetAt:        dbOrg.UsageResetAt,
+		CreatedAt:           dbOrg.CreatedAt,
+		UpdatedAt:           dbOrg.UpdatedAt,
 	}, nil
 }
 
@@ -73,6 +86,7 @@ func (r *OrganizationRepository) GetByUser(ctx context.Context, userID string) (
 		Model(&dbOrgs).
 		Join("JOIN organization_members AS om ON om.organization_id = o.id").
 		Where("om.user_id = ?", userID).
+		Where("om.deleted_at IS NULL").
 		Where("o.deleted_at IS NULL").
 		Scan(ctx)
 
@@ -83,14 +97,17 @@ func (r *OrganizationRepository) GetByUser(ctx context.Context, userID string) (
 	orgs := make([]*storage.Organization, len(dbOrgs))
 	for i, dbOrg := range dbOrgs {
 		orgs[i] = &storage.Organization{
-			ID:            dbOrg.ID,
-			Name:          dbOrg.Name,
-			Slug:          dbOrg.Slug,
-			Tier:          dbOrg.Tier,
-			GitHubOrgID:   dbOrg.GitHubOrgID,
-			GitHubOrgName: dbOrg.GitHubOrgName,
-			CreatedAt:     dbOrg.CreatedAt,
-			UpdatedAt:     dbOrg.UpdatedAt,
+			ID:                  dbOrg.ID,
+			Name:                dbOrg.Name,
+			Slug:                dbOrg.Slug,
+			Tier:                dbOrg.Tier,
+			GitHubOrgID:         dbOrg.GitHubOrgID,
+			GitHubOrgName:       dbOrg.GitHubOrgName,
+			MonthlyRequestLimit: dbOrg.MonthlyRequestLimit,
+			MonthlyRequestCount: dbOrg.MonthlyRequestCount,
+			UsageResetAt:        dbOrg.UsageResetAt,
+			CreatedAt:           dbOrg.CreatedAt,
+			UpdatedAt:           dbOrg.UpdatedAt,
 		}
 	}
 
@@ -154,4 +171,45 @@ func (r *OrganizationRepository) Delete(ctx context.Context, id string) error {
 	}
 
 	return nil
+}
+
+func (r *OrganizationRepository) IncrementRequestCount(ctx context.Context, id string) (*storage.Organization, error) {
+	var dbOrg DBOrganization
+	_, err := r.db.NewUpdate().
+		Model(&dbOrg).
+		Set("monthly_request_count = monthly_request_count + 1").
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Returning("*").
+		Exec(ctx)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &storage.Organization{
+		ID:                  dbOrg.ID,
+		Name:                dbOrg.Name,
+		Slug:                dbOrg.Slug,
+		Tier:                dbOrg.Tier,
+		GitHubOrgID:         dbOrg.GitHubOrgID,
+		GitHubOrgName:       dbOrg.GitHubOrgName,
+		MonthlyRequestLimit: dbOrg.MonthlyRequestLimit,
+		MonthlyRequestCount: dbOrg.MonthlyRequestCount,
+		UsageResetAt:        dbOrg.UsageResetAt,
+		CreatedAt:           dbOrg.CreatedAt,
+		UpdatedAt:           dbOrg.UpdatedAt,
+	}, nil
+}
+
+func (r *OrganizationRepository) ResetMonthlyUsage(ctx context.Context, id string) error {
+	_, err := r.db.NewUpdate().
+		Model((*DBOrganization)(nil)).
+		Set("monthly_request_count = 0").
+		Set("usage_reset_at = ?", nextMonthStart()).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+
+	return err
 }

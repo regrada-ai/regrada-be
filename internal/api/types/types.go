@@ -51,20 +51,22 @@ type CreateOrganizationRequest struct {
 
 // Organization represents an organization
 type Organization struct {
-	ID            string    `json:"id" example:"123e4567-e89b-12d3-a456-426614174000"`
-	Name          string    `json:"name" example:"My Company"`
-	Slug          string    `json:"slug" example:"my-company"`
-	Tier          string    `json:"tier" example:"free"`
-	GitHubOrgID   *int64    `json:"github_org_id,omitempty"`
-	GitHubOrgName string    `json:"github_org_name,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID                  string    `json:"id" example:"123e4567-e89b-12d3-a456-426614174000"`
+	Name                string    `json:"name" example:"My Company"`
+	Slug                string    `json:"slug" example:"my-company"`
+	Tier                string    `json:"tier" example:"starter"`
+	GitHubOrgID         *int64    `json:"github_org_id,omitempty"`
+	GitHubOrgName       string    `json:"github_org_name,omitempty"`
+	MonthlyRequestLimit int64     `json:"monthly_request_limit" example:"50000"`
+	MonthlyRequestCount int64     `json:"monthly_request_count" example:"1234"`
+	UsageResetAt        time.Time `json:"usage_reset_at"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 // CreateAPIKeyRequest represents a request to create an API key
 type CreateAPIKeyRequest struct {
 	Name      string     `json:"name" binding:"required" example:"Production API Key"`
-	Tier      string     `json:"tier" binding:"required" example:"standard"`
 	Scopes    []string   `json:"scopes,omitempty" example:"traces:write,tests:write"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
@@ -74,7 +76,7 @@ type APIKeyResponse struct {
 	ID           string     `json:"id" example:"123e4567-e89b-12d3-a456-426614174000"`
 	Name         string     `json:"name" example:"Production API Key"`
 	KeyPrefix    string     `json:"key_prefix" example:"rg_live_abc123"`
-	Tier         string     `json:"tier" example:"standard"`
+	Tier         string     `json:"tier" example:"team"`
 	Scopes       []string   `json:"scopes" example:"traces:write,tests:write"`
 	RateLimitRPM int        `json:"rate_limit_rpm" example:"100"`
 	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
@@ -92,7 +94,7 @@ type CreateAPIKeyResponse struct {
 // CreateInviteRequest represents a request to create an invite
 type CreateInviteRequest struct {
 	Email          string `json:"email" binding:"required,email" example:"user@example.com"`
-	Role           string `json:"role" binding:"required,oneof=admin user readonly-user" example:"user"`
+	Role           string `json:"role" binding:"required,oneof=admin member viewer" example:"member"`
 	ExpiresInHours int    `json:"expires_in_hours,omitempty" example:"168"`
 }
 
@@ -100,7 +102,7 @@ type CreateInviteRequest struct {
 type InviteResponse struct {
 	ID             string     `json:"id" example:"123e4567-e89b-12d3-a456-426614174000"`
 	Email          string     `json:"email" example:"user@example.com"`
-	Role           string     `json:"role" example:"user"`
+	Role           string     `json:"role" example:"member"`
 	Token          string     `json:"token" example:"abc123token"`
 	OrganizationID string     `json:"organization_id,omitempty"`
 	ExpiresAt      time.Time  `json:"expires_at"`
