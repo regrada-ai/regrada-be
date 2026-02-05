@@ -23,6 +23,7 @@ type Service struct {
 	adminEmail  string
 	snsTopicArn string
 	contactList string
+	frontendURL string
 }
 
 type EmailMessage struct {
@@ -32,7 +33,7 @@ type EmailMessage struct {
 	IsHTML  bool
 }
 
-func NewService(region, fromEmail, fromName, adminEmail, snsTopicArn, contactList string) (*Service, error) {
+func NewService(region, fromEmail, fromName, adminEmail, snsTopicArn, contactList, frontendURL string) (*Service, error) {
 	cfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithRegion(region),
 	)
@@ -53,6 +54,7 @@ func NewService(region, fromEmail, fromName, adminEmail, snsTopicArn, contactLis
 		adminEmail:  adminEmail,
 		snsTopicArn: snsTopicArn,
 		contactList: contactList,
+		frontendURL: frontendURL,
 	}, nil
 }
 
@@ -265,6 +267,66 @@ func (s *Service) notifyAdmin(ctx context.Context, email string) error {
 				Body: &sesv2types.Body{
 					Text: &sesv2types.Content{
 						Data:    aws.String(textBody),
+						Charset: aws.String("UTF-8"),
+					},
+				},
+			},
+		},
+	}
+
+	_, err := s.sesv2Client.SendEmail(ctx, input)
+	return err
+}
+
+// SendInviteEmail sends an organization invite email
+func (s *Service) SendInviteEmail(ctx context.Context, toEmail, inviterName, orgName, role, token string) error {
+	inviteURL := fmt.Sprintf("%s/invite/%s", s.frontendURL, token)
+
+	htmlBody := fmt.Sprintf(`
+<html>
+  <body style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; background-color: #1D1F21; color: #C5C8C6; padding: 20px; margin: 0;">
+    <h2 style="color: #81A2BE;">You've been invited to join %s on Regrada</h2>
+    <p>%s has invited you to join <strong>%s</strong> as a <strong>%s</strong>.</p>
+    <p style="margin: 30px 0;">
+      <a href="%s" style="background-color: #81A2BE; color: #1D1F21; padding: 12px 24px; text-decoration: none; font-weight: bold;">Accept Invitation</a>
+    </p>
+    <p style="color: #969896;">Or copy this link: %s</p>
+    <p style="color: #969896; margin-top: 30px;">
+      <em>CI for AI behavior — catch regressions before they ship.</em>
+    </p>
+    <p style="color: #969896;">- The Regrada Team</p>
+  </body>
+</html>`, orgName, inviterName, orgName, role, inviteURL, inviteURL)
+
+	textBody := fmt.Sprintf(`You've been invited to join %s on Regrada
+
+%s has invited you to join %s as a %s.
+
+Accept the invitation: %s
+
+---
+CI for AI behavior — catch regressions before they ship.
+
+- The Regrada Team`, orgName, inviterName, orgName, role, inviteURL)
+
+	input := &sesv2.SendEmailInput{
+		FromEmailAddress: aws.String(fmt.Sprintf("%s <%s>", s.fromName, s.fromEmail)),
+		Destination: &sesv2types.Destination{
+			ToAddresses: []string{toEmail},
+		},
+		Content: &sesv2types.EmailContent{
+			Simple: &sesv2types.Message{
+				Subject: &sesv2types.Content{
+					Data:    aws.String(fmt.Sprintf("You've been invited to join %s on Regrada", orgName)),
+					Charset: aws.String("UTF-8"),
+				},
+				Body: &sesv2types.Body{
+					Text: &sesv2types.Content{
+						Data:    aws.String(textBody),
+						Charset: aws.String("UTF-8"),
+					},
+					Html: &sesv2types.Content{
+						Data:    aws.String(htmlBody),
 						Charset: aws.String("UTF-8"),
 					},
 				},

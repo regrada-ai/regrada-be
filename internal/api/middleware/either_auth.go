@@ -27,8 +27,8 @@ func (m *EitherAuthMiddleware) Authenticate() gin.HandlerFunc {
 		}
 
 		if m.cookieAuth != nil {
-			accessToken, err := c.Cookie(accessTokenCookie)
-			if err == nil && accessToken != "" {
+			idToken, err := c.Cookie(idTokenCookie)
+			if err == nil && idToken != "" {
 				m.cookieAuth.Authenticate()(c)
 				return
 			}

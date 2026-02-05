@@ -5,9 +5,10 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"time"
 
+	"github.com/regrada-ai/regrada-be/internal/domain"
 	"github.com/regrada-ai/regrada-be/internal/storage"
-	"github.com/regrada-ai/regrada-be/pkg/regrada"
 	"github.com/uptrace/bun"
 )
 
@@ -19,7 +20,7 @@ func NewTraceRepository(db *bun.DB) *TraceRepository {
 	return &TraceRepository{db: db}
 }
 
-func (r *TraceRepository) Create(ctx context.Context, projectID string, trace *regrada.Trace) error {
+func (r *TraceRepository) Create(ctx context.Context, projectID string, trace *domain.Trace) error {
 	requestData, err := json.Marshal(trace.Request)
 	if err != nil {
 		return err
@@ -52,7 +53,7 @@ func (r *TraceRepository) Create(ctx context.Context, projectID string, trace *r
 	return err
 }
 
-func (r *TraceRepository) CreateBatch(ctx context.Context, projectID string, traces []regrada.Trace) error {
+func (r *TraceRepository) CreateBatch(ctx context.Context, projectID string, traces []domain.Trace) error {
 	if len(traces) == 0 {
 		return nil
 	}
@@ -92,12 +93,13 @@ func (r *TraceRepository) CreateBatch(ctx context.Context, projectID string, tra
 	return err
 }
 
-func (r *TraceRepository) Get(ctx context.Context, projectID, traceID string) (*regrada.Trace, error) {
+func (r *TraceRepository) Get(ctx context.Context, projectID, traceID string) (*domain.Trace, error) {
 	var dbTrace DBTrace
 	err := r.db.NewSelect().
 		Model(&dbTrace).
 		Where("project_id = ?", projectID).
 		Where("trace_id = ?", traceID).
+		Where("deleted_at IS NULL").
 		Scan(ctx)
 
 	if err != nil {
@@ -107,7 +109,7 @@ func (r *TraceRepository) Get(ctx context.Context, projectID, traceID string) (*
 		return nil, err
 	}
 
-	trace := &regrada.Trace{
+	trace := &domain.Trace{
 		TraceID:          dbTrace.TraceID,
 		Timestamp:        dbTrace.Timestamp,
 		Provider:         dbTrace.Provider,
@@ -117,7 +119,7 @@ func (r *TraceRepository) Get(ctx context.Context, projectID, traceID string) (*
 		GitBranch:        dbTrace.GitBranch,
 		RedactionApplied: dbTrace.RedactionApplied,
 		Tags:             dbTrace.Tags,
-		Metrics: regrada.TraceMetrics{
+		Metrics: domain.TraceMetrics{
 			LatencyMS: dbTrace.LatencyMS,
 			TokensIn:  dbTrace.TokensIn,
 			TokensOut: dbTrace.TokensOut,
@@ -135,11 +137,12 @@ func (r *TraceRepository) Get(ctx context.Context, projectID, traceID string) (*
 	return trace, nil
 }
 
-func (r *TraceRepository) List(ctx context.Context, projectID string, limit, offset int) ([]*regrada.Trace, error) {
+func (r *TraceRepository) List(ctx context.Context, projectID string, limit, offset int) ([]*domain.Trace, error) {
 	var dbTraces []DBTrace
 	err := r.db.NewSelect().
 		Model(&dbTraces).
 		Where("project_id = ?", projectID).
+		Where("deleted_at IS NULL").
 		Order("timestamp DESC").
 		Limit(limit).
 		Offset(offset).
@@ -149,9 +152,9 @@ func (r *TraceRepository) List(ctx context.Context, projectID string, limit, off
 		return nil, err
 	}
 
-	traces := make([]*regrada.Trace, len(dbTraces))
+	traces := make([]*domain.Trace, len(dbTraces))
 	for i, dbTrace := range dbTraces {
-		trace := &regrada.Trace{
+		trace := &domain.Trace{
 			TraceID:          dbTrace.TraceID,
 			Timestamp:        dbTrace.Timestamp,
 			Provider:         dbTrace.Provider,
@@ -161,7 +164,7 @@ func (r *TraceRepository) List(ctx context.Context, projectID string, limit, off
 			GitBranch:        dbTrace.GitBranch,
 			RedactionApplied: dbTrace.RedactionApplied,
 			Tags:             dbTrace.Tags,
-			Metrics: regrada.TraceMetrics{
+			Metrics: domain.TraceMetrics{
 				LatencyMS: dbTrace.LatencyMS,
 				TokensIn:  dbTrace.TokensIn,
 				TokensOut: dbTrace.TokensOut,
@@ -180,4 +183,29 @@ func (r *TraceRepository) List(ctx context.Context, projectID string, limit, off
 	}
 
 	return traces, nil
+}
+
+func (r *TraceRepository) Delete(ctx context.Context, projectID, traceID string) error {
+	res, err := r.db.NewUpdate().
+		Model((*DBTrace)(nil)).
+		Set("deleted_at = ?", time.Now()).
+		Where("project_id = ?", projectID).
+		Where("trace_id = ?", traceID).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return storage.ErrNotFound
+	}
+
+	return nil
 }

@@ -17,10 +17,11 @@ var defaultAPIKeyScopes = []string{"traces:write", "tests:write", "projects:read
 
 type APIKeyHandler struct {
 	apiKeyRepo storage.APIKeyRepository
+	orgRepo    storage.OrganizationRepository
 }
 
-func NewAPIKeyHandler(apiKeyRepo storage.APIKeyRepository) *APIKeyHandler {
-	return &APIKeyHandler{apiKeyRepo: apiKeyRepo}
+func NewAPIKeyHandler(apiKeyRepo storage.APIKeyRepository, orgRepo storage.OrganizationRepository) *APIKeyHandler {
+	return &APIKeyHandler{apiKeyRepo: apiKeyRepo, orgRepo: orgRepo}
 }
 
 type apiKeyResponse struct {
@@ -97,7 +98,7 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 
 // CreateAPIKey creates a new API key for the authenticated organization.
 // @Summary Create a new API key
-// @Description Create a new API key for your organization. The secret is only returned once.
+// @Description Create a new API key for your organization. The secret is only returned once. The API key tier is inherited from the organization's tier.
 // @Tags api-keys
 // @Accept json
 // @Produce json
@@ -122,7 +123,6 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 
 	var req struct {
 		Name      string     `json:"name" binding:"required"`
-		Tier      string     `json:"tier" binding:"required"`
 		Scopes    []string   `json:"scopes"`
 		ExpiresAt *time.Time `json:"expires_at"`
 	}
@@ -148,17 +148,20 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 		return
 	}
 
-	tier := strings.ToLower(strings.TrimSpace(req.Tier))
-	rateLimitRPM, ok := rateLimitForTier(tier)
-	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{
+	// Get organization to determine tier
+	org, err := h.orgRepo.Get(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
-				"code":    "INVALID_REQUEST",
-				"message": "tier must be standard, pro, or enterprise",
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to fetch organization",
 			},
 		})
 		return
 	}
+
+	tier := org.Tier
+	rateLimitRPM := rateLimitForTier(tier)
 
 	scopes := req.Scopes
 	if len(scopes) == 0 {
@@ -220,16 +223,33 @@ func generateAPIKey() (secret, hash, prefix string, err error) {
 	return secret, hash, prefix, nil
 }
 
-func rateLimitForTier(tier string) (int, bool) {
+func rateLimitForTier(tier string) int {
 	switch tier {
-	case "standard":
-		return 100, true
-	case "pro":
-		return 500, true
+	case "starter":
+		return 10
+	case "team":
+		return 100
+	case "scale":
+		return 500
 	case "enterprise":
-		return 2000, true
+		return 2000
 	default:
-		return 0, false
+		return 10 // Default to starter tier rate limit
+	}
+}
+
+func monthlyLimitForTier(tier string) int64 {
+	switch tier {
+	case "starter":
+		return 50_000
+	case "team":
+		return 500_000
+	case "scale":
+		return 5_000_000
+	case "enterprise":
+		return 20_000_000
+	default:
+		return 50_000 // Default to starter tier limit
 	}
 }
 
@@ -299,7 +319,6 @@ func (h *APIKeyHandler) UpdateAPIKey(c *gin.Context) {
 
 	var req struct {
 		Name      *string    `json:"name"`
-		Tier      *string    `json:"tier"`
 		Scopes    []string   `json:"scopes"`
 		ExpiresAt *time.Time `json:"expires_at"`
 	}
@@ -345,24 +364,9 @@ func (h *APIKeyHandler) UpdateAPIKey(c *gin.Context) {
 		return
 	}
 
-	// Update fields
+	// Update fields (tier is not updatable - it's linked to organization tier)
 	if req.Name != nil {
 		key.Name = *req.Name
-	}
-	if req.Tier != nil {
-		tier := strings.ToLower(strings.TrimSpace(*req.Tier))
-		rateLimitRPM, ok := rateLimitForTier(tier)
-		if !ok {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": gin.H{
-					"code":    "INVALID_REQUEST",
-					"message": "tier must be standard, pro, or enterprise",
-				},
-			})
-			return
-		}
-		key.Tier = tier
-		key.RateLimitRPM = rateLimitRPM
 	}
 	if req.Scopes != nil {
 		key.Scopes = req.Scopes

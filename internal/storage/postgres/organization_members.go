@@ -41,6 +41,7 @@ func (r *organizationMemberRepository) GetByUserAndOrg(ctx context.Context, user
 		Model(dbMember).
 		Where("user_id = ?", userID).
 		Where("organization_id = ?", orgID).
+		Where("deleted_at IS NULL").
 		Scan(ctx)
 
 	if err == sql.ErrNoRows {
@@ -65,6 +66,7 @@ func (r *organizationMemberRepository) ListByUser(ctx context.Context, userID st
 	err := r.db.NewSelect().
 		Model(&dbMembers).
 		Where("user_id = ?", userID).
+		Where("deleted_at IS NULL").
 		Scan(ctx)
 
 	if err != nil {
@@ -91,6 +93,7 @@ func (r *organizationMemberRepository) ListByOrganization(ctx context.Context, o
 	err := r.db.NewSelect().
 		Model(&dbMembers).
 		Where("organization_id = ?", orgID).
+		Where("deleted_at IS NULL").
 		Scan(ctx)
 
 	if err != nil {
@@ -118,6 +121,7 @@ func (r *organizationMemberRepository) UpdateRole(ctx context.Context, id string
 		Set("role = ?", role).
 		Set("updated_at = ?", time.Now()).
 		Where("id = ?", id).
+		Where("deleted_at IS NULL").
 		Exec(ctx)
 
 	if err != nil {
@@ -137,9 +141,11 @@ func (r *organizationMemberRepository) UpdateRole(ctx context.Context, id string
 }
 
 func (r *organizationMemberRepository) Delete(ctx context.Context, id string) error {
-	res, err := r.db.NewDelete().
+	res, err := r.db.NewUpdate().
 		Model((*DBOrganizationMember)(nil)).
+		Set("deleted_at = ?", time.Now()).
 		Where("id = ?", id).
+		Where("deleted_at IS NULL").
 		Exec(ctx)
 
 	if err != nil {

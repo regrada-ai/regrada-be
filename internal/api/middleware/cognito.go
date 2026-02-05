@@ -116,14 +116,6 @@ func (m *CognitoMiddleware) Authenticate() gin.HandlerFunc {
 			return
 		}
 
-		// Extract custom claims
-		organizationID := ""
-		if orgID, exists := parsedToken.Get("custom:organization_id"); exists {
-			if orgIDStr, ok := orgID.(string); ok {
-				organizationID = orgIDStr
-			}
-		}
-
 		email := ""
 		if emailClaim, exists := parsedToken.Get("email"); exists {
 			if emailStr, ok := emailClaim.(string); ok {
@@ -140,9 +132,9 @@ func (m *CognitoMiddleware) Authenticate() gin.HandlerFunc {
 
 		// Store user information in context
 		c.Set("user_id", sub)
-		c.Set("organization_id", organizationID)
 		c.Set("email", email)
 		c.Set("name", name)
+		// Note: organization_id is looked up from database, not from JWT claims
 
 		// Store full token for debugging if needed
 		c.Set("jwt_token", parsedToken)

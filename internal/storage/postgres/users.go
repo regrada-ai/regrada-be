@@ -23,7 +23,6 @@ func (r *userRepository) Create(ctx context.Context, user *storage.User) error {
 		IDPSub:         user.IDPSub,
 		Name:           user.Name,
 		ProfilePicture: user.ProfilePicture,
-		Role:           UserRole(user.Role),
 	}
 
 	_, err := r.db.NewInsert().Model(dbUser).Returning("*").Exec(ctx)
@@ -33,7 +32,6 @@ func (r *userRepository) Create(ctx context.Context, user *storage.User) error {
 
 	user.ID = dbUser.ID
 	user.ProfilePicture = dbUser.ProfilePicture
-	user.Role = storage.UserRole(dbUser.Role)
 	user.CreatedAt = dbUser.CreatedAt
 	user.UpdatedAt = dbUser.UpdatedAt
 	return nil
@@ -60,7 +58,6 @@ func (r *userRepository) GetByID(ctx context.Context, id string) (*storage.User,
 		IDPSub:         dbUser.IDPSub,
 		Name:           dbUser.Name,
 		ProfilePicture: dbUser.ProfilePicture,
-		Role:           storage.UserRole(dbUser.Role),
 		CreatedAt:      dbUser.CreatedAt,
 		UpdatedAt:      dbUser.UpdatedAt,
 	}, nil
@@ -87,7 +84,6 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*storage
 		IDPSub:         dbUser.IDPSub,
 		Name:           dbUser.Name,
 		ProfilePicture: dbUser.ProfilePicture,
-		Role:           storage.UserRole(dbUser.Role),
 		CreatedAt:      dbUser.CreatedAt,
 		UpdatedAt:      dbUser.UpdatedAt,
 	}, nil
@@ -114,7 +110,6 @@ func (r *userRepository) GetByIDPSub(ctx context.Context, idpSub string) (*stora
 		IDPSub:         dbUser.IDPSub,
 		Name:           dbUser.Name,
 		ProfilePicture: dbUser.ProfilePicture,
-		Role:           storage.UserRole(dbUser.Role),
 		CreatedAt:      dbUser.CreatedAt,
 		UpdatedAt:      dbUser.UpdatedAt,
 	}, nil
@@ -127,13 +122,12 @@ func (r *userRepository) Update(ctx context.Context, user *storage.User) error {
 		IDPSub:         user.IDPSub,
 		Name:           user.Name,
 		ProfilePicture: user.ProfilePicture,
-		Role:           UserRole(user.Role),
 		UpdatedAt:      time.Now(),
 	}
 
 	res, err := r.db.NewUpdate().
 		Model(dbUser).
-		Column("email", "idp_sub", "name", "profile_picture", "role", "updated_at").
+		Column("email", "idp_sub", "name", "profile_picture", "updated_at").
 		Where("id = ?", user.ID).
 		Where("deleted_at IS NULL").
 		Exec(ctx)

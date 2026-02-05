@@ -22,22 +22,22 @@ install-tools:
 # Generate Swagger docs
 docs:
 	@echo "Generating Swagger documentation..."
-	@$(shell go env GOPATH)/bin/swag init -g cmd/server/main.go -o docs
+	@$(shell go env GOPATH)/bin/swag init -g cmd/server.go -o docs
 	@echo "✓ Swagger docs generated"
 
 # Run development server with auto-docs generation
 dev: docs docker-up
 	@echo "Starting development server..."
-	go run ./cmd/server
+	@bash -c 'set -a && source .env && set +a && go run ./cmd/server.go'
 
 # Run server without docs generation
 run:
-	go run ./cmd/server
+	@bash -c 'set -a && source .env && set +a && go run ./cmd/server.go'
 
 # Build the server
 build: docs
 	@echo "Building server..."
-	CGO_ENABLED=0 go build -o bin/server ./cmd/server
+	CGO_ENABLED=0 go build -o bin/server ./cmd/server.go
 	@echo "✓ Server built at bin/server"
 
 # Run tests

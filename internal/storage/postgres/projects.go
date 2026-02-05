@@ -4,9 +4,10 @@ package postgres
 
 import (
 	"context"
+	"time"
 
-	"github.com/uptrace/bun"
 	"github.com/regrada-ai/regrada-be/internal/storage"
+	"github.com/uptrace/bun"
 )
 
 type ProjectRepository struct {
@@ -85,4 +86,59 @@ func (r *ProjectRepository) ListByOrganization(ctx context.Context, orgID string
 	}
 
 	return projects, nil
+}
+
+func (r *ProjectRepository) Update(ctx context.Context, project *storage.Project) error {
+	dbProject := &DBProject{
+		ID:   project.ID,
+		Name: project.Name,
+		Slug: project.Slug,
+	}
+
+	res, err := r.db.NewUpdate().
+		Model(dbProject).
+		Column("name", "slug", "updated_at").
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", project.ID).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return storage.ErrNotFound
+	}
+
+	return nil
+}
+
+func (r *ProjectRepository) Delete(ctx context.Context, id string) error {
+	res, err := r.db.NewUpdate().
+		Model((*DBProject)(nil)).
+		Set("deleted_at = ?", time.Now()).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Exec(ctx)
+
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return storage.ErrNotFound
+	}
+
+	return nil
 }

@@ -52,3 +52,6 @@ logs/
 
 # Auto-generated Swagger docs
 docs/
+
+# Mock auth persistence (local dev)
+data/

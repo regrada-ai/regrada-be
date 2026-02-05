@@ -82,12 +82,14 @@ func (m *RateLimitMiddleware) getLimitForTier(tier string) int {
 	switch tier {
 	case "enterprise":
 		return 2000 // 2000 RPM
-	case "pro":
+	case "scale":
 		return 500 // 500 RPM
-	case "standard":
+	case "team":
 		return 100 // 100 RPM
+	case "starter":
+		return 10 // 10 RPM
 	default:
-		return 100
+		return 10 // Default to starter tier
 	}
 }
 

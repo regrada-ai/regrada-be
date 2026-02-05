@@ -10,8 +10,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ses v1.34.18
 	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.59.1
 	github.com/aws/aws-sdk-go-v2/service/sns v1.39.11
-	github.com/aws/smithy-go v1.24.0
 	github.com/gin-gonic/gin v1.11.0
+	github.com/google/uuid v1.6.0
 	github.com/lestrrat-go/jwx/v2 v2.1.6
 	github.com/redis/go-redis/v9 v9.17.2
 	github.com/swaggo/files v1.0.1
@@ -40,6 +40,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.9 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.6 // indirect
+	github.com/aws/smithy-go v1.24.0 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect

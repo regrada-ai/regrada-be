@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Regrada-Proprietary
 
-package regrada
+package domain
 
 import (
 	"encoding/json"

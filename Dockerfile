@@ -24,10 +24,19 @@ FROM alpine:latest
 
 RUN apk --no-cache add ca-certificates curl
 
-WORKDIR /root/
+# Create non-root user
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+WORKDIR /app
+
+# Create data directory for mock auth persistence
+RUN mkdir -p /app/data && chown -R appuser:appgroup /app
 
 # Copy the binary from builder
 COPY --from=builder /app/server .
+
+# Switch to non-root user
+USER appuser
 
 EXPOSE 8080
 

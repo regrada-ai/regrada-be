@@ -6,9 +6,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/regrada-ai/regrada-be/internal/domain"
 	"github.com/regrada-ai/regrada-be/internal/storage"
-	"github.com/regrada-ai/regrada-be/pkg/regrada"
-	// "github.com/regrada-ai/regrada-be/pkg/regrada"
 )
 
 type TestRunHandler struct {
@@ -30,7 +29,7 @@ func NewTestRunHandler(testRunRepo storage.TestRunRepository, projectRepo storag
 // @Accept       json
 // @Produce      json
 // @Param        projectID  path      string           true  "Project ID"
-// @Param        testRun    body      regrada.TestRun  true  "Test run data"
+// @Param        testRun    body      domain.TestRun  true  "Test run data"
 // @Success      201        {object}  map[string]interface{} "Test run created successfully"
 // @Failure      400        {object}  map[string]interface{} "Invalid request"
 // @Failure      401        {object}  map[string]interface{} "Unauthorized"
@@ -40,7 +39,7 @@ func NewTestRunHandler(testRunRepo storage.TestRunRepository, projectRepo storag
 func (h *TestRunHandler) UploadTestRun(c *gin.Context) {
 	projectID := c.Param("projectID")
 
-	var testRun regrada.TestRun
+	var testRun domain.TestRun
 	if err := c.ShouldBindJSON(&testRun); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
@@ -109,7 +108,7 @@ func (h *TestRunHandler) ListTestRuns(c *gin.Context) {
 // @Produce      json
 // @Param        projectID  path      string  true  "Project ID"
 // @Param        runID      path      string  true  "Test Run ID"
-// @Success      200        {object}  regrada.TestRun "Test run details"
+// @Success      200        {object}  domain.TestRun "Test run details"
 // @Failure      401        {object}  map[string]interface{} "Unauthorized"
 // @Failure      404        {object}  map[string]interface{} "Test run not found"
 // @Failure      500        {object}  map[string]interface{} "Internal server error"

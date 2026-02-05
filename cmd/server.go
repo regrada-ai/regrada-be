@@ -63,6 +63,7 @@ func main() {
 	cognitoUserPoolID := getEnv("COGNITO_USER_POOL_ID", "")
 	cognitoClientID := getEnv("COGNITO_CLIENT_ID", "")
 	cognitoClientSecret := getEnv("COGNITO_CLIENT_SECRET", "")
+	cognitoDomain := getEnv("COGNITO_DOMAIN", "") // e.g., "auth.regrada.com" or "yourapp.auth.us-east-1.amazoncognito.com"
 	secureCookies := getEnv("SECURE_COOKIES", "false") == "true"
 	cookieDomain := getEnv("COOKIE_DOMAIN", "") // e.g., ".regrada.com" for cross-subdomain cookies
 	s3Bucket := getEnv("S3_BUCKET", "")
@@ -121,17 +122,19 @@ func main() {
 	memberRepo := postgres.NewOrganizationMemberRepository(db)
 	inviteRepo := postgres.NewInviteRepository(db)
 
-	// Initialize authentication service (Cognito)
+	// Initialize authentication service (Cognito or Mock)
 	var authService auth.Service
 	if cognitoUserPoolID != "" && cognitoClientID != "" {
 		var err error
-		authService, err = auth.NewCognitoService(awsRegion, cognitoUserPoolID, cognitoClientID, cognitoClientSecret)
+		authService, err = auth.NewCognitoService(awsRegion, cognitoUserPoolID, cognitoClientID, cognitoClientSecret, cognitoDomain)
 		if err != nil {
 			log.Fatalf("Failed to initialize authentication service: %v", err)
 		}
-		log.Println("✓ Authentication service initialized")
+		log.Println("✓ Authentication service initialized (Cognito)")
 	} else {
-		log.Println("⚠ Authentication service disabled (missing COGNITO_USER_POOL_ID or COGNITO_CLIENT_ID)")
+		// Use mock authentication service for local development
+		authService = auth.NewMockService()
+		log.Println("✓ Authentication service initialized (Mock - for local development only)")
 	}
 
 	// Initialize email service (optional)
@@ -141,9 +144,10 @@ func main() {
 	adminEmail := getEnv("ADMIN_EMAIL", "")
 	snsTopicArn := getEnv("SNS_TOPIC_ARN", "")
 	contactListName := getEnv("CONTACT_LIST_NAME", "regrada-newsletter")
+	frontendURL := getEnv("FRONTEND_URL", "http://localhost:3000")
 	if fromEmail != "" {
 		var err error
-		emailService, err = email.NewService(awsRegion, fromEmail, fromName, adminEmail, snsTopicArn, contactListName)
+		emailService, err = email.NewService(awsRegion, fromEmail, fromName, adminEmail, snsTopicArn, contactListName, frontendURL)
 		if err != nil {
 			log.Fatalf("Failed to initialize email service: %v", err)
 		}
@@ -166,20 +170,19 @@ func main() {
 	}
 
 	// Initialize handlers
-	orgHandler := handlers.NewOrganizationHandler(orgRepo, authService)
-	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo)
+	orgHandler := handlers.NewOrganizationHandler(orgRepo, memberRepo, userRepo, apiKeyRepo)
+	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, orgRepo)
 	projectHandler := handlers.NewProjectHandler(projectRepo)
 	traceHandler := handlers.NewTraceHandler(traceRepo, projectRepo)
 	testRunHandler := handlers.NewTestRunHandler(testRunRepo, projectRepo)
 	healthHandler := handlers.NewHealthHandler(sqldb, redisClient)
 	userHandler := handlers.NewUserHandler(userRepo, memberRepo, storageService)
-	inviteHandler := handlers.NewInviteHandler(inviteRepo, userRepo, memberRepo)
+	inviteHandler := handlers.NewInviteHandler(inviteRepo, userRepo, memberRepo, orgRepo, emailService)
 
-	var authHandler *handlers.AuthHandler
 	var emailHandler *handlers.EmailHandler
-	if authService != nil {
-		authHandler = handlers.NewAuthHandler(authService, secureCookies, cookieDomain, userRepo, memberRepo, orgRepo, inviteRepo, storageService)
-	}
+	// Auth handler is always initialized now (either Cognito or Mock)
+	authHandler := handlers.NewAuthHandler(authService, secureCookies, cookieDomain, userRepo, memberRepo, orgRepo, inviteRepo, storageService)
+
 	if emailService != nil {
 		emailHandler = handlers.NewEmailHandler(emailService)
 	}
@@ -187,13 +190,11 @@ func main() {
 	// Initialize middleware
 	apiKeyAuthMiddleware := apimiddleware.NewAuthMiddleware(apiKeyRepo, redisClient)
 	rateLimitMiddleware := apimiddleware.NewRateLimitMiddleware(redisClient)
+	usageMiddleware := apimiddleware.NewUsageMiddleware(orgRepo)
 
-	// Initialize cookie-based auth middleware if auth service is configured
-	var cookieAuthMiddleware *apimiddleware.CookieAuthMiddleware
-	if authService != nil {
-		cookieAuthMiddleware = apimiddleware.NewCookieAuthMiddleware(authService)
-		log.Println("✓ Cookie-based authentication enabled")
-	}
+	// Initialize cookie-based auth middleware (always enabled now with either Cognito or Mock)
+	cookieAuthMiddleware := apimiddleware.NewCookieAuthMiddleware(authService, userRepo, memberRepo)
+	log.Println("✓ Cookie-based authentication enabled")
 
 	// Setup Gin router
 	gin.SetMode(ginMode)
@@ -211,16 +212,16 @@ func main() {
 	v1 := r.Group("/v1")
 	{
 		// Authentication routes (no auth required)
-		if authHandler != nil {
-			auth := v1.Group("/auth")
-			{
-				auth.POST("/signup", authHandler.SignUp)
-				auth.POST("/confirm", authHandler.ConfirmSignUp)
-				auth.POST("/signin", authHandler.SignIn)
-				auth.POST("/signout", authHandler.SignOut)
-				auth.POST("/refresh", authHandler.RefreshToken)
-				auth.GET("/me", authHandler.Me)
-			}
+		auth := v1.Group("/auth")
+		{
+			auth.POST("/signup", authHandler.SignUp)
+			auth.POST("/confirm", authHandler.ConfirmSignUp)
+			auth.POST("/signin", authHandler.SignIn)
+			auth.POST("/signout", authHandler.SignOut)
+			auth.POST("/refresh", authHandler.RefreshToken)
+			auth.POST("/google", authHandler.GoogleSignIn)
+			auth.POST("/setup-organization", authHandler.SetupOrganization)
+			auth.GET("/me", authHandler.Me)
 		}
 
 		// Public routes (no auth required)
@@ -243,7 +244,6 @@ func main() {
 			protected.GET("/organizations", orgHandler.ListOrganizations)
 			protected.PUT("/organizations/:orgID", orgHandler.UpdateOrganization)
 			protected.DELETE("/organizations/:orgID", orgHandler.DeleteOrganization)
-			protected.POST("/organizations/:orgID/invite", orgHandler.InviteUser)
 			protected.GET("/organizations/:orgID/users", userHandler.ListOrganizationUsers)
 			protected.PUT("/organizations/:orgID/members/:userID", userHandler.UpdateOrganizationMemberRole)
 			protected.DELETE("/organizations/:orgID/members/:userID", userHandler.RemoveOrganizationMember)
@@ -282,13 +282,21 @@ func main() {
 			projects := protected.Group("/projects/:projectID")
 			{
 				projects.GET("", projectHandler.GetProject)
-				projects.POST("/traces", traceHandler.UploadTrace)
-				projects.POST("/traces/batch", traceHandler.UploadTracesBatch)
+
+				// Read-only routes (not metered)
 				projects.GET("/traces", traceHandler.ListTraces)
 				projects.GET("/traces/:traceID", traceHandler.GetTrace)
-				projects.POST("/test-runs", testRunHandler.UploadTestRun)
 				projects.GET("/test-runs", testRunHandler.ListTestRuns)
 				projects.GET("/test-runs/:runID", testRunHandler.GetTestRun)
+
+				// Metered routes (count against monthly usage)
+				metered := projects.Group("")
+				metered.Use(usageMiddleware.TrackUsage())
+				{
+					metered.POST("/traces", traceHandler.UploadTrace)
+					metered.POST("/traces/batch", traceHandler.UploadTracesBatch)
+					metered.POST("/test-runs", testRunHandler.UploadTestRun)
+				}
 			}
 		}
 	}

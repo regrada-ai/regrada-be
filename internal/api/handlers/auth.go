@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -85,10 +86,21 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 	}
 
 	var orgID string
+	var dbToken string // The raw token for DB lookups
+
+	// URL decode the invite token if present (in case it was encoded in the URL)
+	inviteToken := req.InviteToken
+	if inviteToken != "" {
+		if decoded, err := url.QueryUnescape(inviteToken); err == nil {
+			inviteToken = decoded
+		}
+		// Decode compound token to extract email and raw token
+		_, dbToken, _ = decodeInviteToken(inviteToken)
+	}
 
 	// Handle invite token
-	if req.InviteToken != "" {
-		invite, err := h.inviteRepo.GetByToken(c.Request.Context(), req.InviteToken)
+	if inviteToken != "" {
+		invite, err := h.inviteRepo.GetByToken(c.Request.Context(), dbToken)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": gin.H{
@@ -154,9 +166,10 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 
 		slug := strings.ToLower(strings.ReplaceAll(req.OrganizationName, " ", "-"))
 		org := &storage.Organization{
-			Name: req.OrganizationName,
-			Slug: slug,
-			Tier: "free",
+			Name:                req.OrganizationName,
+			Slug:                slug,
+			Tier:                "starter",
+			MonthlyRequestLimit: 50_000,
 		}
 
 		if err := h.orgRepo.Create(c.Request.Context(), org); err != nil {
@@ -182,7 +195,7 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 		orgID = org.ID
 	}
 
-	result, err := h.authService.SignUp(c.Request.Context(), req.Email, req.Password, req.Name, orgID)
+	result, err := h.authService.SignUp(c.Request.Context(), req.Email, req.Password, req.Name)
 	if err != nil {
 		log.Printf("SignUp error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -195,17 +208,10 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 	}
 
 	// Create user in database
-	// Set role based on whether they're creating an org or joining via invite
-	userRole := storage.UserRoleUser
-	if req.CreateOrganization {
-		userRole = storage.UserRoleAdmin
-	}
-
 	user := &storage.User{
 		Email:     req.Email,
 		IDPSub:    result.UserSub,
 		Name:      req.Name,
-		Role:      userRole,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -218,9 +224,9 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 	// If organization was created or invite was used, add user as member
 	if orgID != "" {
 		role := storage.UserRoleAdmin
-		if req.InviteToken != "" {
+		if dbToken != "" {
 			// Use role from invite
-			invite, _ := h.inviteRepo.GetByToken(c.Request.Context(), req.InviteToken)
+			invite, _ := h.inviteRepo.GetByToken(c.Request.Context(), dbToken)
 			if invite != nil {
 				role = invite.Role
 			}
@@ -240,8 +246,8 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 		}
 
 		// Accept the invite if one was used
-		if req.InviteToken != "" {
-			if err := h.inviteRepo.Accept(c.Request.Context(), req.InviteToken, user.ID); err != nil {
+		if dbToken != "" {
+			if err := h.inviteRepo.Accept(c.Request.Context(), dbToken, user.ID); err != nil {
 				log.Printf("Failed to accept invite: %v", err)
 			}
 		}
@@ -374,9 +380,11 @@ func (h *AuthHandler) SignOut(c *gin.Context) {
 
 // Me returns the current user's information
 func (h *AuthHandler) Me(c *gin.Context) {
-	// Get access token from cookie
-	accessToken, err := c.Cookie(accessTokenCookie)
-	if err != nil {
+	var userInfo *auth.UserInfo
+
+	// Use ID token for authentication (works for both federated and native users)
+	idToken, err := c.Cookie(idTokenCookie)
+	if err != nil || idToken == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": gin.H{
 				"code":    "UNAUTHORIZED",
@@ -386,13 +394,13 @@ func (h *AuthHandler) Me(c *gin.Context) {
 		return
 	}
 
-	userInfo, err := h.authService.GetUser(c.Request.Context(), accessToken)
+	userInfo, _, err = h.authService.ValidateIDToken(c.Request.Context(), idToken)
 	if err != nil {
-		log.Printf("GetUser error: %v", err)
+		log.Printf("ValidateIDToken error: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": gin.H{
-				"code":    "UNAUTHORIZED",
-				"message": "Invalid or expired session",
+				"code":    "TOKEN_EXPIRED",
+				"message": "Session expired, please refresh",
 			},
 		})
 		return
@@ -411,10 +419,27 @@ func (h *AuthHandler) Me(c *gin.Context) {
 		return
 	}
 
-	// Generate CloudFront URL for profile picture if it exists
+	// Generate profile picture URL
+	// - If it's already a full URL (from Google/OAuth), use it directly
+	// - If it's an S3 path (custom upload), generate CloudFront URL
 	var profilePictureURL string
-	if user.ProfilePicture != "" && h.storageService != nil {
-		profilePictureURL = h.storageService.GetCloudFrontURL(user.ProfilePicture)
+	if user.ProfilePicture != "" {
+		if strings.HasPrefix(user.ProfilePicture, "http") {
+			profilePictureURL = user.ProfilePicture
+		} else if h.storageService != nil {
+			profilePictureURL = h.storageService.GetCloudFrontURL(user.ProfilePicture)
+		}
+	} else if userInfo.Picture != "" {
+		profilePictureURL = userInfo.Picture
+	}
+
+	// Get organization and role from database
+	var organizationID string
+	var role storage.UserRole
+	memberships, err := h.memberRepo.ListByUser(c.Request.Context(), user.ID)
+	if err == nil && len(memberships) > 0 {
+		organizationID = memberships[0].OrganizationID
+		role = memberships[0].Role
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -422,10 +447,11 @@ func (h *AuthHandler) Me(c *gin.Context) {
 			"id":              user.ID,
 			"sub":             userInfo.Sub,
 			"email":           user.Email,
+			"email_verified":  userInfo.EmailVerified,
 			"name":            user.Name,
 			"profile_picture": profilePictureURL,
-			"role":            user.Role,
-			"organization_id": userInfo.OrganizationID,
+			"role":            role,
+			"organization_id": organizationID,
 		},
 	})
 }
@@ -462,6 +488,262 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Token refreshed successfully",
+	})
+}
+
+// GoogleSignIn handles OAuth sign-in (Google via Cognito)
+// The frontend sends the authorization code, backend exchanges it for tokens securely
+// @Summary Sign in with Google (OAuth)
+// @Description Exchanges OAuth authorization code for tokens and creates a session
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body object{code=string,redirect_uri=string} true "OAuth authorization code and redirect URI"
+// @Success 200 {object} object{success=bool,user=object}
+// @Failure 400 {object} object{error=object{code=string,message=string}}
+// @Failure 401 {object} object{error=object{code=string,message=string}}
+// @Router /auth/google [post]
+func (h *AuthHandler) GoogleSignIn(c *gin.Context) {
+	var req struct {
+		Code        string `json:"code" binding:"required"`
+		RedirectURI string `json:"redirect_uri" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"code":    "INVALID_REQUEST",
+				"message": err.Error(),
+			},
+		})
+		return
+	}
+
+	// Exchange the authorization code for tokens (server-side, with client secret)
+	tokens, err := h.authService.ExchangeCodeForTokens(c.Request.Context(), req.Code, req.RedirectURI)
+	if err != nil {
+		log.Printf("ExchangeCodeForTokens error: %v", err)
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": gin.H{
+				"code":    "TOKEN_EXCHANGE_FAILED",
+				"message": "Failed to exchange authorization code",
+			},
+		})
+		return
+	}
+
+	// Validate the ID token and extract user info
+	userInfo, _, err := h.authService.ValidateIDToken(c.Request.Context(), tokens.IDToken)
+	if err != nil {
+		log.Printf("ValidateIDToken error: %v", err)
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": gin.H{
+				"code":    "INVALID_TOKEN",
+				"message": "Invalid or expired token",
+			},
+		})
+		return
+	}
+
+	// Sync user to database
+	if err := h.syncUserToDB(c.Request.Context(), userInfo); err != nil {
+		log.Printf("Failed to sync OAuth user to database: %v", err)
+	}
+
+	// Get user from database
+	user, err := h.userRepo.GetByIDPSub(c.Request.Context(), userInfo.Sub)
+	if err != nil {
+		log.Printf("Failed to get user from database after OAuth: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to retrieve user information",
+			},
+		})
+		return
+	}
+
+	// Handle pending invites
+	if err := h.processPendingInvites(c.Request.Context(), userInfo); err != nil {
+		log.Printf("Failed to process pending invites: %v", err)
+	}
+
+	// Set HTTP-only secure session cookies
+	h.setAuthCookies(c, tokens)
+
+	// Generate profile picture URL
+	// - If it's already a full URL (from Google/OAuth), use it directly
+	// - If it's an S3 path (custom upload), generate CloudFront URL
+	var profilePictureURL string
+	if user.ProfilePicture != "" {
+		if strings.HasPrefix(user.ProfilePicture, "http") {
+			profilePictureURL = user.ProfilePicture
+		} else if h.storageService != nil {
+			profilePictureURL = h.storageService.GetCloudFrontURL(user.ProfilePicture)
+		}
+	} else if userInfo.Picture != "" {
+		profilePictureURL = userInfo.Picture
+	}
+
+	// Get organization and role from database
+	var organizationID string
+	var role storage.UserRole
+	memberships, err := h.memberRepo.ListByUser(c.Request.Context(), user.ID)
+	if err == nil && len(memberships) > 0 {
+		organizationID = memberships[0].OrganizationID
+		role = memberships[0].Role
+	}
+
+	// Determine if user needs to set up an organization
+	needsOrganization := organizationID == ""
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":            true,
+		"needs_organization": needsOrganization,
+		"user": gin.H{
+			"id":              user.ID,
+			"sub":             userInfo.Sub,
+			"email":           user.Email,
+			"email_verified":  userInfo.EmailVerified,
+			"name":            user.Name,
+			"profile_picture": profilePictureURL,
+			"role":            role,
+			"organization_id": organizationID,
+		},
+	})
+}
+
+// SetupOrganization creates an organization for authenticated users who don't have one
+// @Summary Setup organization for current user
+// @Description Creates an organization for the current user and adds them as admin
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body object{organization_name=string} true "Organization setup request"
+// @Success 200 {object} object{success=bool,organization_id=string}
+// @Failure 400 {object} object{error=object{code=string,message=string}}
+// @Failure 401 {object} object{error=object{code=string,message=string}}
+// @Router /auth/setup-organization [post]
+func (h *AuthHandler) SetupOrganization(c *gin.Context) {
+	var req struct {
+		OrganizationName string `json:"organization_name" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"code":    "INVALID_REQUEST",
+				"message": "Organization name is required",
+			},
+		})
+		return
+	}
+
+	// Get user info from ID token
+	idToken, err := c.Cookie(idTokenCookie)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": gin.H{
+				"code":    "UNAUTHORIZED",
+				"message": "Not authenticated",
+			},
+		})
+		return
+	}
+
+	userInfo, _, err := h.authService.ValidateIDToken(c.Request.Context(), idToken)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": gin.H{
+				"code":    "UNAUTHORIZED",
+				"message": "Invalid or expired session",
+			},
+		})
+		return
+	}
+
+	// Get user from database
+	user, err := h.userRepo.GetByIDPSub(c.Request.Context(), userInfo.Sub)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to retrieve user information",
+			},
+		})
+		return
+	}
+
+	// Check if user already has an organization
+	memberships, err := h.memberRepo.ListByUser(c.Request.Context(), user.ID)
+	if err == nil && len(memberships) > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"code":    "ALREADY_HAS_ORGANIZATION",
+				"message": "User already belongs to an organization",
+			},
+		})
+		return
+	}
+
+	// Create the organization
+	slug := strings.ToLower(strings.ReplaceAll(req.OrganizationName, " ", "-"))
+	org := &storage.Organization{
+		Name:                req.OrganizationName,
+		Slug:                slug,
+		Tier:                "starter",
+		MonthlyRequestLimit: 50_000,
+	}
+
+	if err := h.orgRepo.Create(c.Request.Context(), org); err != nil {
+		if err == storage.ErrAlreadyExists {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": gin.H{
+					"code":    "SLUG_EXISTS",
+					"message": "An organization with this name already exists",
+				},
+			})
+			return
+		}
+		log.Printf("Failed to create organization: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to create organization",
+			},
+		})
+		return
+	}
+
+	// Add user as admin member
+	member := &storage.OrganizationMember{
+		OrganizationID: org.ID,
+		UserID:         user.ID,
+		Role:           storage.UserRoleAdmin,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+
+	if err := h.memberRepo.Create(c.Request.Context(), member); err != nil {
+		log.Printf("Failed to create organization member: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_ERROR",
+				"message": "Failed to add user to organization",
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":         true,
+		"organization_id": org.ID,
+		"organization": gin.H{
+			"id":   org.ID,
+			"name": org.Name,
+			"slug": org.Slug,
+			"tier": org.Tier,
+		},
 	})
 }
 
@@ -536,9 +818,24 @@ func (h *AuthHandler) syncUserToDB(ctx context.Context, userInfo *auth.UserInfo)
 
 	if existingUser != nil {
 		// User exists, update if needed
-		if existingUser.Email != userInfo.Email || existingUser.Name != userInfo.Name {
+		needsUpdate := false
+		if existingUser.Email != userInfo.Email {
 			existingUser.Email = userInfo.Email
+			needsUpdate = true
+		}
+		// Update name if it was empty or different (prefer non-empty name from provider)
+		if userInfo.Name != "" && (existingUser.Name == "" || existingUser.Name != userInfo.Name) {
 			existingUser.Name = userInfo.Name
+			needsUpdate = true
+		}
+		// Update profile picture from OAuth provider if user doesn't have a custom one
+		// (custom profile pictures are S3 paths, OAuth pictures are URLs)
+		if userInfo.Picture != "" && (existingUser.ProfilePicture == "" || strings.HasPrefix(existingUser.ProfilePicture, "http")) {
+			existingUser.ProfilePicture = userInfo.Picture
+			needsUpdate = true
+		}
+		if needsUpdate {
+			existingUser.UpdatedAt = time.Now()
 			if err := h.userRepo.Update(ctx, existingUser); err != nil {
 				return fmt.Errorf("failed to update user: %w", err)
 			}
@@ -555,7 +852,13 @@ func (h *AuthHandler) syncUserToDB(ctx context.Context, userInfo *auth.UserInfo)
 	if existingUser != nil {
 		// User exists with this email but different/missing IDPSub - update it
 		existingUser.IDPSub = userInfo.Sub
-		existingUser.Name = userInfo.Name
+		if userInfo.Name != "" {
+			existingUser.Name = userInfo.Name
+		}
+		// Update profile picture if user doesn't have a custom one
+		if userInfo.Picture != "" && (existingUser.ProfilePicture == "" || strings.HasPrefix(existingUser.ProfilePicture, "http")) {
+			existingUser.ProfilePicture = userInfo.Picture
+		}
 		existingUser.UpdatedAt = time.Now()
 		if err := h.userRepo.Update(ctx, existingUser); err != nil {
 			return fmt.Errorf("failed to update user IDPSub: %w", err)
@@ -569,7 +872,6 @@ func (h *AuthHandler) syncUserToDB(ctx context.Context, userInfo *auth.UserInfo)
 		IDPSub:         userInfo.Sub,
 		Name:           userInfo.Name,
 		ProfilePicture: userInfo.Picture,
-		Role:           storage.UserRoleUser, // Default role
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}
