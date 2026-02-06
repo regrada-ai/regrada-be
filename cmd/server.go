@@ -181,7 +181,7 @@ func main() {
 
 	var emailHandler *handlers.EmailHandler
 	// Auth handler is always initialized now (either Cognito or Mock)
-	authHandler := handlers.NewAuthHandler(authService, secureCookies, cookieDomain, userRepo, memberRepo, orgRepo, inviteRepo, storageService)
+	authHandler := handlers.NewAuthHandler(authService, secureCookies, cookieDomain, userRepo, memberRepo, orgRepo, inviteRepo, storageService, redisClient)
 
 	if emailService != nil {
 		emailHandler = handlers.NewEmailHandler(emailService)
@@ -202,8 +202,10 @@ func main() {
 	allowedOrigins := strings.Split(getEnv("CORS_ALLOW_ORIGINS", "http://localhost:3000"), ",")
 	r.Use(apimiddleware.NewCORSMiddleware(allowedOrigins))
 
-	// Swagger documentation
-	r.GET("/docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	// Swagger documentation (debug mode only)
+	if ginMode == "debug" {
+		r.GET("/docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	}
 
 	// Health check (no auth required)
 	r.GET("/health", healthHandler.Health)
@@ -211,12 +213,13 @@ func main() {
 	// API routes
 	v1 := r.Group("/v1")
 	{
-		// Authentication routes (no auth required)
+		// Authentication routes (no auth required, IP-rate-limited)
+		authRateLimit := rateLimitMiddleware.LimitByIP(10) // 10 requests per minute per IP
 		auth := v1.Group("/auth")
 		{
-			auth.POST("/signup", authHandler.SignUp)
-			auth.POST("/confirm", authHandler.ConfirmSignUp)
-			auth.POST("/signin", authHandler.SignIn)
+			auth.POST("/signup", authRateLimit, authHandler.SignUp)
+			auth.POST("/confirm", authRateLimit, authHandler.ConfirmSignUp)
+			auth.POST("/signin", authRateLimit, authHandler.SignIn)
 			auth.POST("/signout", authHandler.SignOut)
 			auth.POST("/refresh", authHandler.RefreshToken)
 			auth.POST("/google", authHandler.GoogleSignIn)
@@ -225,8 +228,6 @@ func main() {
 		}
 
 		// Public routes (no auth required)
-		v1.POST("/organizations", orgHandler.CreateOrganization)
-		v1.GET("/organizations/:orgID", orgHandler.GetOrganization)
 		v1.GET("/invites/:token", inviteHandler.GetInvite)
 
 		// Newsletter signup (public, no auth required)
@@ -241,6 +242,8 @@ func main() {
 		protected.Use(rateLimitMiddleware.Limit())
 		{
 			// Organization routes
+			protected.POST("/organizations", orgHandler.CreateOrganization)
+			protected.GET("/organizations/:orgID", orgHandler.GetOrganization)
 			protected.GET("/organizations", orgHandler.ListOrganizations)
 			protected.PUT("/organizations/:orgID", orgHandler.UpdateOrganization)
 			protected.DELETE("/organizations/:orgID", orgHandler.DeleteOrganization)

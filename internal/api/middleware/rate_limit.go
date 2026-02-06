@@ -4,6 +4,7 @@ package middleware
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -43,8 +44,15 @@ func (m *RateLimitMiddleware) Limit() gin.HandlerFunc {
 		// Increment counter
 		count, err := m.redisClient.Incr(ctx, rateLimitKey).Result()
 		if err != nil {
-			// On Redis error, allow the request (fail open)
-			c.Next()
+			// On Redis error, reject the request (fail closed)
+			log.Printf("Rate limiter Redis error: %v", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error": gin.H{
+					"code":    "SERVICE_UNAVAILABLE",
+					"message": "Service temporarily unavailable, please try again later",
+				},
+			})
+			c.Abort()
 			return
 		}
 
@@ -68,6 +76,52 @@ func (m *RateLimitMiddleware) Limit() gin.HandlerFunc {
 						"limit": limit,
 						"reset": (window + 1) * 60,
 					},
+				},
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// LimitByIP applies IP-based rate limiting for unauthenticated endpoints (e.g. auth routes).
+func (m *RateLimitMiddleware) LimitByIP(requestsPerMinute int) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		ip := c.ClientIP()
+		now := time.Now()
+		window := now.Unix() / 60
+
+		rateLimitKey := fmt.Sprintf("ratelimit:ip:%s:%d", ip, window)
+
+		count, err := m.redisClient.Incr(ctx, rateLimitKey).Result()
+		if err != nil {
+			log.Printf("IP rate limiter Redis error: %v", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error": gin.H{
+					"code":    "SERVICE_UNAVAILABLE",
+					"message": "Service temporarily unavailable, please try again later",
+				},
+			})
+			c.Abort()
+			return
+		}
+
+		if count == 1 {
+			m.redisClient.Expire(ctx, rateLimitKey, 2*time.Minute)
+		}
+
+		c.Header("X-RateLimit-Limit", strconv.Itoa(requestsPerMinute))
+		c.Header("X-RateLimit-Remaining", strconv.Itoa(max(0, requestsPerMinute-int(count))))
+		c.Header("X-RateLimit-Reset", strconv.FormatInt((window+1)*60, 10))
+
+		if count > int64(requestsPerMinute) {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": gin.H{
+					"code":    "RATE_LIMIT_EXCEEDED",
+					"message": "Too many requests, please try again later",
 				},
 			})
 			c.Abort()

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"github.com/regrada-ai/regrada-be/internal/auth"
 	"github.com/regrada-ai/regrada-be/internal/storage"
 )
@@ -20,6 +21,10 @@ const (
 	refreshTokenCookie = "refresh_token"
 	cookieMaxAge       = 3600 // 1 hour
 	cookiePath         = "/"
+
+	// Token blocklist key prefix and TTL (matches refresh token max age)
+	tokenBlocklistPrefix = "token_blocklist:"
+	tokenBlocklistTTL    = 30 * 24 * time.Hour // 30 days
 )
 
 type AuthHandler struct {
@@ -31,6 +36,7 @@ type AuthHandler struct {
 	orgRepo        storage.OrganizationRepository
 	inviteRepo     storage.InviteRepository
 	storageService storage.FileStorageService
+	redisClient    *redis.Client
 }
 
 func NewAuthHandler(
@@ -42,6 +48,7 @@ func NewAuthHandler(
 	orgRepo storage.OrganizationRepository,
 	inviteRepo storage.InviteRepository,
 	storageService storage.FileStorageService,
+	redisClient *redis.Client,
 ) *AuthHandler {
 	return &AuthHandler{
 		authService:    authService,
@@ -52,6 +59,7 @@ func NewAuthHandler(
 		orgRepo:        orgRepo,
 		inviteRepo:     inviteRepo,
 		storageService: storageService,
+		redisClient:    redisClient,
 	}
 }
 
@@ -76,10 +84,11 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("SignUp binding error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
 				"code":    "INVALID_REQUEST",
-				"message": err.Error(),
+				"message": "Invalid request. Please check all required fields.",
 			},
 		})
 		return
@@ -164,7 +173,16 @@ func (h *AuthHandler) SignUp(c *gin.Context) {
 			return
 		}
 
-		slug := strings.ToLower(strings.ReplaceAll(req.OrganizationName, " ", "-"))
+		slug, err := sanitizeSlug(req.OrganizationName)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{
+					"code":    "INVALID_REQUEST",
+					"message": "Organization name must produce a valid slug (at least 2 alphanumeric characters)",
+				},
+			})
+			return
+		}
 		org := &storage.Organization{
 			Name:                req.OrganizationName,
 			Slug:                slug,
@@ -269,10 +287,11 @@ func (h *AuthHandler) ConfirmSignUp(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("[ConfirmSignUp] binding error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
 				"code":    "INVALID_REQUEST",
-				"message": err.Error(),
+				"message": "Invalid request parameters",
 			},
 		})
 		return
@@ -303,10 +322,11 @@ func (h *AuthHandler) SignIn(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("[SignIn] binding error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
 				"code":    "INVALID_REQUEST",
-				"message": err.Error(),
+				"message": "Invalid request parameters",
 			},
 		})
 		return
@@ -366,6 +386,15 @@ func (h *AuthHandler) SignOut(c *gin.Context) {
 		// Try to sign out from Cognito (best effort)
 		if err := h.authService.SignOut(c.Request.Context(), accessToken); err != nil {
 			log.Printf("Cognito SignOut error (non-fatal): %v", err)
+		}
+	}
+
+	// Add refresh token to blocklist so it can't be reused
+	refreshToken, err := c.Cookie(refreshTokenCookie)
+	if err == nil && refreshToken != "" && h.redisClient != nil {
+		blocklistKey := tokenBlocklistPrefix + refreshToken
+		if err := h.redisClient.Set(c.Request.Context(), blocklistKey, "revoked", tokenBlocklistTTL).Err(); err != nil {
+			log.Printf("Failed to add refresh token to blocklist (non-fatal): %v", err)
 		}
 	}
 
@@ -470,6 +499,24 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
+	// Check if the refresh token has been revoked
+	if h.redisClient != nil {
+		blocklistKey := tokenBlocklistPrefix + refreshToken
+		exists, err := h.redisClient.Exists(c.Request.Context(), blocklistKey).Result()
+		if err != nil {
+			log.Printf("Failed to check token blocklist (allowing refresh): %v", err)
+		} else if exists > 0 {
+			h.clearAuthCookies(c)
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": gin.H{
+					"code":    "TOKEN_REVOKED",
+					"message": "Session has been revoked. Please log in again.",
+				},
+			})
+			return
+		}
+	}
+
 	tokens, err := h.authService.RefreshToken(c.Request.Context(), refreshToken)
 	if err != nil {
 		log.Printf("RefreshToken error: %v", err)
@@ -510,10 +557,11 @@ func (h *AuthHandler) GoogleSignIn(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("[GoogleSignIn] binding error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
 				"code":    "INVALID_REQUEST",
-				"message": err.Error(),
+				"message": "Invalid request parameters",
 			},
 		})
 		return
@@ -687,7 +735,16 @@ func (h *AuthHandler) SetupOrganization(c *gin.Context) {
 	}
 
 	// Create the organization
-	slug := strings.ToLower(strings.ReplaceAll(req.OrganizationName, " ", "-"))
+	slug, err := sanitizeSlug(req.OrganizationName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"code":    "INVALID_REQUEST",
+				"message": "Organization name must produce a valid slug (at least 2 alphanumeric characters)",
+			},
+		})
+		return
+	}
 	org := &storage.Organization{
 		Name:                req.OrganizationName,
 		Slug:                slug,
@@ -750,9 +807,6 @@ func (h *AuthHandler) SetupOrganization(c *gin.Context) {
 // setAuthCookies sets the authentication cookies
 func (h *AuthHandler) setAuthCookies(c *gin.Context, tokens *auth.AuthTokens) {
 	sameSite := http.SameSiteLaxMode
-	if h.secureCookies {
-		sameSite = http.SameSiteNoneMode
-	}
 
 	// Access token cookie
 	c.SetCookie(

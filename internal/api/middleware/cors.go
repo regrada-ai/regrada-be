@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -17,6 +19,11 @@ func NewCORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
 			continue
 		}
 		if value == "*" {
+			ginMode := os.Getenv("GIN_MODE")
+			if ginMode == "release" {
+				log.Printf("WARNING: CORS wildcard origin '*' is configured in release mode — ignoring wildcard, only specific origins will be allowed")
+				continue
+			}
 			allowAll = true
 		}
 		allowed[value] = struct{}{}

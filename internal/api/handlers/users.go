@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -101,6 +102,9 @@ func (h *UserHandler) GetCurrentUser(c *gin.Context) {
 func (h *UserHandler) GetUser(c *gin.Context) {
 	userID := c.Param("userID")
 
+	// Verify the requesting user belongs to the same organization
+	requestingUserOrgID := c.GetString("organization_id")
+
 	user, err := h.userRepo.GetByID(c.Request.Context(), userID)
 	if err != nil {
 		if err == storage.ErrNotFound {
@@ -121,17 +125,25 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 		return
 	}
 
+	// Check that the target user belongs to the same organization
+	memberships, err := h.memberRepo.ListByUser(c.Request.Context(), user.ID)
+	if err != nil || len(memberships) == 0 || memberships[0].OrganizationID != requestingUserOrgID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    "FORBIDDEN",
+				"message": "Cannot access users from a different organization",
+			},
+		})
+		return
+	}
+
 	// Generate CloudFront URL for profile picture if it exists
 	var profilePictureURL string
 	if user.ProfilePicture != "" && h.storageService != nil {
 		profilePictureURL = h.storageService.GetCloudFrontURL(user.ProfilePicture)
 	}
 
-	// Get role from membership (users belong to at most one org)
-	var role storage.UserRole
-	if membership, err := h.memberRepo.ListByUser(c.Request.Context(), user.ID); err == nil && len(membership) == 1 {
-		role = membership[0].Role
-	}
+	role := memberships[0].Role
 
 	userResponse := gin.H{
 		"id":              user.ID,
@@ -279,11 +291,11 @@ func (h *UserHandler) UploadProfilePicture(c *gin.Context) {
 	// Upload to S3
 	contentType := header.Header.Get("Content-Type")
 	if err := h.storageService.UploadFile(c.Request.Context(), s3Key, file, contentType); err != nil {
-		fmt.Printf("S3 upload failed for key %s: %v\n", s3Key, err)
+		log.Printf("S3 upload failed for key %s: %v", s3Key, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
 				"code":    "UPLOAD_FAILED",
-				"message": fmt.Sprintf("Failed to upload file: %v", err),
+				"message": "Failed to upload file",
 			},
 		})
 		return
@@ -406,10 +418,11 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("[UpdateUser] binding error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
 				"code":    "INVALID_REQUEST",
-				"message": err.Error(),
+				"message": "Invalid request parameters",
 			},
 		})
 		return
@@ -543,15 +556,28 @@ func (h *UserHandler) UpdateOrganizationMemberRole(c *gin.Context) {
 		return
 	}
 
+	// Require admin role to change member roles
+	role := c.GetString("role")
+	if role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    "FORBIDDEN",
+				"message": "Admin role required to update member roles",
+			},
+		})
+		return
+	}
+
 	var req struct {
 		Role storage.UserRole `json:"role" binding:"required,oneof=admin member viewer"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("[UpdateOrganizationMemberRole] binding error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
 				"code":    "INVALID_REQUEST",
-				"message": err.Error(),
+				"message": "Invalid request parameters",
 			},
 		})
 		return
@@ -603,6 +629,18 @@ func (h *UserHandler) RemoveOrganizationMember(c *gin.Context) {
 			"error": gin.H{
 				"code":    "FORBIDDEN",
 				"message": "Cannot remove members from a different organization",
+			},
+		})
+		return
+	}
+
+	// Require admin role to remove members
+	role := c.GetString("role")
+	if role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    "FORBIDDEN",
+				"message": "Admin role required to remove members",
 			},
 		})
 		return

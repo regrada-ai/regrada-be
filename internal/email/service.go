@@ -3,6 +3,7 @@ package email
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -120,7 +121,7 @@ func (s *Service) NewsletterSignup(ctx context.Context, email string) error {
 		err := s.addContactToList(ctx, email)
 		if err != nil {
 			// Log but don't fail - contact might already exist
-			fmt.Printf("Contact list error (non-blocking): %v\n", err)
+			log.Printf("Contact list error (non-blocking): %v", err)
 		}
 	}
 
@@ -128,21 +129,21 @@ func (s *Service) NewsletterSignup(ctx context.Context, email string) error {
 	if s.snsTopicArn != "" {
 		err := s.publishToSNS(ctx, email)
 		if err != nil {
-			fmt.Printf("SNS publish error (non-blocking): %v\n", err)
+			log.Printf("SNS publish error (non-blocking): %v", err)
 		}
 	}
 
 	// Send welcome email
 	err := s.sendWelcomeEmail(ctx, email)
 	if err != nil {
-		fmt.Printf("Welcome email error (non-blocking): %v\n", err)
+		log.Printf("Welcome email error (non-blocking): %v", err)
 	}
 
 	// Notify admin (if configured)
 	if s.adminEmail != "" {
 		err := s.notifyAdmin(ctx, email)
 		if err != nil {
-			fmt.Printf("Admin notification error (non-blocking): %v\n", err)
+			log.Printf("Admin notification error (non-blocking): %v", err)
 		}
 	}
 
