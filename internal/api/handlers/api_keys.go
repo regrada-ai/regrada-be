@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -128,10 +129,11 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("[CreateAPIKey] binding error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
 				"code":    "INVALID_REQUEST",
-				"message": err.Error(),
+				"message": "Invalid request parameters",
 			},
 		})
 		return
@@ -324,10 +326,11 @@ func (h *APIKeyHandler) UpdateAPIKey(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("[UpdateAPIKey] binding error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
 				"code":    "INVALID_REQUEST",
-				"message": err.Error(),
+				"message": "Invalid request parameters",
 			},
 		})
 		return

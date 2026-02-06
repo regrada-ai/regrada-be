@@ -4,14 +4,38 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"regexp"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/regrada-ai/regrada-be/internal/storage"
 
 	_ "github.com/regrada-ai/regrada-be/internal/api/types" // for swagger
 )
+
+var slugRegex = regexp.MustCompile(`[^a-z0-9-]`)
+
+// sanitizeSlug generates a URL-safe slug from a name, allowing only lowercase alphanumeric and hyphens.
+func sanitizeSlug(name string) (string, error) {
+	slug := strings.ToLower(strings.TrimSpace(name))
+	slug = strings.ReplaceAll(slug, " ", "-")
+	slug = slugRegex.ReplaceAllString(slug, "")
+	// Collapse multiple hyphens
+	for strings.Contains(slug, "--") {
+		slug = strings.ReplaceAll(slug, "--", "-")
+	}
+	slug = strings.Trim(slug, "-")
+	if len(slug) < 2 {
+		return "", fmt.Errorf("slug must be at least 2 characters")
+	}
+	if len(slug) > 63 {
+		slug = slug[:63]
+	}
+	return slug, nil
+}
 
 type OrganizationHandler struct {
 	orgRepo    storage.OrganizationRepository
@@ -73,10 +97,11 @@ func (h *OrganizationHandler) CreateOrganization(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("[CreateOrganization] binding error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
 				"code":    "INVALID_REQUEST",
-				"message": err.Error(),
+				"message": "Invalid request parameters",
 			},
 		})
 		return
@@ -132,7 +157,6 @@ func (h *OrganizationHandler) ListOrganizations(c *gin.Context) {
 		return
 	}
 
-	log.Printf("ListOrganizations: fetching orgs for user_id=%s", userID)
 	orgs, err := h.orgRepo.GetByUser(c.Request.Context(), userID)
 	if err != nil {
 		log.Printf("Failed to fetch organizations for user %s: %v", userID, err)
@@ -207,6 +231,18 @@ func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
 		return
 	}
 
+	// Require admin role to update organization
+	role := c.GetString("role")
+	if role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    "FORBIDDEN",
+				"message": "Admin role required to update organization",
+			},
+		})
+		return
+	}
+
 	var req struct {
 		Name          *string `json:"name"`
 		Slug          *string `json:"slug"`
@@ -216,10 +252,11 @@ func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("[UpdateOrganization] binding error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
 				"code":    "INVALID_REQUEST",
-				"message": err.Error(),
+				"message": "Invalid request parameters",
 			},
 		})
 		return
@@ -319,6 +356,18 @@ func (h *OrganizationHandler) DeleteOrganization(c *gin.Context) {
 			"error": gin.H{
 				"code":    "FORBIDDEN",
 				"message": "Cannot delete a different organization",
+			},
+		})
+		return
+	}
+
+	// Require admin role to delete organization
+	role := c.GetString("role")
+	if role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"code":    "FORBIDDEN",
+				"message": "Admin role required to delete organization",
 			},
 		})
 		return

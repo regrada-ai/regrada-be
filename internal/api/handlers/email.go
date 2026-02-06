@@ -28,10 +28,11 @@ func (h *EmailHandler) SendEmail(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("[SendEmail] binding error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
 				"code":    "INVALID_REQUEST",
-				"message": err.Error(),
+				"message": "Invalid request parameters",
 			},
 		})
 		return
